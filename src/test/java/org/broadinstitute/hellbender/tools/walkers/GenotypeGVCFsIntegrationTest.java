@@ -46,6 +46,7 @@ public class GenotypeGVCFsIntegrationTest extends CommandLineProgramTest {
                 {basePairGVCF, "standardConfTest.expected.vcf", Arrays.asList("-stand_call_conf", "300", "-stand_emit_conf", "100")}, //changing call and emission confidence
                 {"spanningDel.combined.g.vcf", "spanningDel.combined.g.vcf.expected.vcf", NO_EXTRA_ARGS},
                 {"spanningDel.delOnly.g.vcf", "spanningDel.delOnly.g.vcf.expected.vcf", NO_EXTRA_ARGS},
+                {"spanningDel.depr.delOnly.g.vcf", "spanningDel.depr.delOnly.g.vcf.expected.vcf" , NO_EXTRA_ARGS},
                 {"CEUTrio.20.21.gatk3.4.g.vcf", "CEUTrio.20.21.expected.vcf", Arrays.asList("--dbsnp", "src/test/resources/large/dbsnp_138.b37.20.21.vcf")},
                 //{basePairGVCF, "gvcf.basepairResolution.includeNonVariantSites.expected.vcf", Collections.singletonList("--includeNonVariantSites")
         };
