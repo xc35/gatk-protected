@@ -1,18 +1,24 @@
 package org.broadinstitute.hellbender.tools.exome.segmentation;
 
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.broadinstitute.hellbender.cmdline.Argument;
 import org.broadinstitute.hellbender.cmdline.CommandLineProgram;
 import org.broadinstitute.hellbender.cmdline.CommandLineProgramProperties;
 import org.broadinstitute.hellbender.cmdline.ExomeStandardArgumentDefinitions;
 import org.broadinstitute.hellbender.cmdline.programgroups.CopyNumberProgramGroup;
+import org.broadinstitute.hellbender.tools.exome.HashedListTargetCollection;
 import org.broadinstitute.hellbender.tools.exome.ModeledSegment;
 import org.broadinstitute.hellbender.tools.exome.SegmentUtils;
+import org.broadinstitute.hellbender.tools.exome.TargetCollection;
+import org.broadinstitute.hellbender.tools.exome.alleliccount.AllelicCount;
 import org.broadinstitute.hellbender.tools.exome.alleliccount.AllelicCountCollection;
 import org.broadinstitute.hellbender.tools.pon.allelic.AllelicPanelOfNormals;
+import org.broadinstitute.hellbender.utils.SimpleInterval;
 
 import java.io.File;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Created by davidben on 5/23/16.
@@ -65,9 +71,11 @@ public final class PerformAlleleFractionSegmentation extends CommandLineProgram 
                 allelicPoNFile != null ? AllelicPanelOfNormals.read(allelicPoNFile) : AllelicPanelOfNormals.EMPTY_PON;
         final AllelicCountCollection acc = new AllelicCountCollection(snpCountsFile);
         final AlleleFractionSegmenter segmenter = new AlleleFractionSegmenter(initialNumStates, acc, allelicPoN);
-        final List<ModeledSegment> segments = segmenter.findSegments();
-
-
+        final TargetCollection<AllelicCount> tc = new HashedListTargetCollection<>(acc.getCounts());
+        final List<Pair<SimpleInterval, Double>> segmentation = segmenter.findSegments();
+        final List<ModeledSegment> segments = segmentation.stream()
+                .map(pair -> new ModeledSegment(pair.getLeft(), tc.targetCount(pair.getLeft()), pair.getRight()))
+                .collect(Collectors.toList());
 
         /* This code is for output in ACNV format so that it can be used as input to our ACNV plotting code
             during development.  When allele fraction and copy ratio HMM segmentation are combined, they will output

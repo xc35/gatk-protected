@@ -9,6 +9,7 @@ import org.broadinstitute.hellbender.tools.pon.allelic.AllelicPanelOfNormals;
 import org.broadinstitute.hellbender.utils.OptimizationUtils;
 import org.broadinstitute.hellbender.utils.Utils;
 
+import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -16,13 +17,12 @@ import java.util.stream.IntStream;
 /**
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
  */
-public final class AlleleFractionSegmenter extends ClusteringGenomicHMMSegmenter<AllelicCount> {
+public final class AlleleFractionSegmenter extends ScalarHMMSegmenter<AllelicCount> {
     private final AllelicPanelOfNormals allelicPoN;
     private AlleleFractionGlobalParameters biasParameters;
     private static final double INITIAL_MEAN_ALLELIC_BIAS = 1.0;
     private static final double INITIAL_ALLELIC_BIAS_VARIANCE = 1e-2;
     private static final double INITIAL_OUTLIER_PROBABILITY = 3e-2;
-
 
     /**
      * Initialize the segmenter with its data and panel of normals, giving equal weight to a set of evenly-spaced
@@ -35,27 +35,23 @@ public final class AlleleFractionSegmenter extends ClusteringGenomicHMMSegmenter
      */
     public AlleleFractionSegmenter(final int initialNumStates, final AllelicCountCollection acc,
                                    final AllelicPanelOfNormals allelicPoN) {
-        super(initialNumStates, acc.getCounts().stream().map(AllelicCount::getInterval).collect(Collectors.toList()), acc.getCounts());
+        super(initialNumStates, acc.getCounts().stream().map(AllelicCount::getInterval).collect(Collectors.toList()), acc.getCounts(), initialMinorFractions(initialNumStates));
         this.allelicPoN = Utils.nonNull(allelicPoN);
+        biasParameters = new AlleleFractionGlobalParameters(INITIAL_MEAN_ALLELIC_BIAS, INITIAL_ALLELIC_BIAS_VARIANCE, INITIAL_OUTLIER_PROBABILITY);
+
     }
 
     /**
      * evenly-spaced minor allele fractions going from 1/2 to 0
      * @param K the initial number of hidden states
      */
-    @Override
-    protected void initializeHiddenStateValues(final int K) {
-        hiddenStateValues = IntStream.range(0, K).mapToDouble(n ->  ((double) K - n) / (2*K)).toArray();
+    private static List<Double> initialMinorFractions(final int K) {
+        return IntStream.range(0, K).mapToDouble(n ->  ((double) K - n) / (2*K)).boxed().collect(Collectors.toList());
     }
 
     @Override
-    protected void initializeAdditionalParameters() {
-        biasParameters = new AlleleFractionGlobalParameters(INITIAL_MEAN_ALLELIC_BIAS, INITIAL_ALLELIC_BIAS_VARIANCE, INITIAL_OUTLIER_PROBABILITY);
-    }
-
-    @Override
-    protected ClusteringGenomicHMM<AllelicCount> makeModel() {
-        return new AlleleFractionHiddenMarkovModel(hiddenStateValues, weights, memoryLength, allelicPoN, biasParameters);
+    protected ClusteringGenomicHMM<AllelicCount, Double> makeModel() {
+        return new AlleleFractionHiddenMarkovModel(hiddenStateValues.stream().mapToDouble(Double::doubleValue).toArray(), weights, getMemoryLength(), allelicPoN, biasParameters);
     }
 
     @Override
@@ -66,7 +62,7 @@ public final class AlleleFractionSegmenter extends ClusteringGenomicHMMSegmenter
                 for (int state = 0; state < weights.length; state++) {
                     final double eStepPosterior = eStep.pStateAtPosition(state, position);
                     logLikelihood += eStepPosterior < NEGLIGIBLE_POSTERIOR_FOR_M_STEP ? 0 :eStepPosterior
-                            * AlleleFractionHiddenMarkovModel.logEmissionProbability(data.get(position), hiddenStateValues[state], params, allelicPoN);
+                            * AlleleFractionHiddenMarkovModel.logEmissionProbability(data.get(position), hiddenStateValues.get(state), params, allelicPoN);
                 }
             }
             return logLikelihood;
@@ -95,4 +91,12 @@ public final class AlleleFractionSegmenter extends ClusteringGenomicHMMSegmenter
 
     @Override
     protected double maxHiddenStateValue() { return  AlleleFractionState.MAX_MINOR_FRACTION; }
+
+    public AllelicPanelOfNormals getAllelicPoN() {
+        return allelicPoN;
+    }
+
+    public AlleleFractionGlobalParameters getBiasParameters() {
+        return biasParameters;
+    }
 }

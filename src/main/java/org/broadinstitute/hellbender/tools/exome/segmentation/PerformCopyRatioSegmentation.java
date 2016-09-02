@@ -1,6 +1,8 @@
 package org.broadinstitute.hellbender.tools.exome.segmentation;
 
 import com.google.cloud.dataflow.sdk.repackaged.com.google.common.primitives.Doubles;
+import org.apache.avro.test.Simple;
+import org.apache.commons.lang3.tuple.Pair;
 import org.broadinstitute.hellbender.cmdline.Argument;
 import org.broadinstitute.hellbender.cmdline.CommandLineProgram;
 import org.broadinstitute.hellbender.cmdline.CommandLineProgramProperties;
@@ -64,9 +66,11 @@ public final class PerformCopyRatioSegmentation extends CommandLineProgram {
         final List<Double> coverage = Doubles.asList(counts.counts().getColumn(0));
         final List<SimpleInterval> intervals = counts.targets().stream().map(Target::getInterval).collect(Collectors.toList());
         final CopyRatioSegmenter segmenter = new CopyRatioSegmenter(initialNumStates, intervals, coverage);
-        final List<ModeledSegment> segmentsWithLog2Means = segmenter.findSegments();
-        final List<ModeledSegment> segments = segmentsWithLog2Means.stream().map(segment ->
-                new ModeledSegment(segment.getSimpleInterval(), segment.getTargetCount(), segment.getSegmentMeanInCRSpace())).collect(Collectors.toList());;
+        final List<Pair<SimpleInterval, Double>> intervalLog2CoveragePairs = segmenter.findSegments();
+        final TargetCollection<SimpleInterval> tc = new HashedListTargetCollection<>(intervals);
+
+        final List<ModeledSegment> segments = intervalLog2CoveragePairs.stream().map(pair ->
+                new ModeledSegment(pair.getLeft(), tc.targetCount(pair.getLeft()), Math.pow(2, pair.getRight()))).collect(Collectors.toList());
         SegmentUtils.writeModeledSegmentFile(outputSegmentsFile, segments, sampleName, true);
 
         return "SUCCESS";

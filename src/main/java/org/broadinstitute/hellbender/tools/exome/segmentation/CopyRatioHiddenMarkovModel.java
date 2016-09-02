@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.tools.exome.segmentation;
 
+import com.google.cloud.dataflow.sdk.repackaged.com.google.common.primitives.Doubles;
 import org.apache.commons.math3.distribution.AbstractRealDistribution;
 import org.apache.commons.math3.distribution.CauchyDistribution;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
@@ -26,7 +27,7 @@ import java.util.stream.Collectors;
  *
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
  */
-public final class CopyRatioHiddenMarkovModel extends ClusteringGenomicHMM<Double> {
+public final class CopyRatioHiddenMarkovModel extends ClusteringGenomicHMM<Double, Double> {
     private final double logCoverageCauchyWidth;
     private final List<AbstractRealDistribution> emissionDistributions;
 
@@ -40,7 +41,7 @@ public final class CopyRatioHiddenMarkovModel extends ClusteringGenomicHMM<Doubl
      */
     public CopyRatioHiddenMarkovModel(final double[] log2CopyRatios, final double[] weights,
                                       final double memoryLength, final double logCoverageCauchyWidth) {
-        super(log2CopyRatios, weights, memoryLength);
+        super(Doubles.asList(log2CopyRatios), weights, memoryLength);
         this.logCoverageCauchyWidth = logCoverageCauchyWidth;
         emissionDistributions = hiddenStates().stream()
                 .map(n -> new CauchyDistribution(log2CopyRatios[n], logCoverageCauchyWidth)).collect(Collectors.toList());
@@ -58,7 +59,7 @@ public final class CopyRatioHiddenMarkovModel extends ClusteringGenomicHMM<Doubl
      * Visible for the segmenter
      */
     @Override
-    public double logEmissionProbability(final Double data, final double copyRatio) {
+    public double logEmissionProbability(final Double data, final Double copyRatio) {
         return logEmissionProbability(data, copyRatio, logCoverageCauchyWidth);
     }
 
@@ -70,6 +71,4 @@ public final class CopyRatioHiddenMarkovModel extends ClusteringGenomicHMM<Doubl
     }
 
     public double getCopyRatio(final int state) { return getHiddenStateValue(state); }
-    public double[] getCopyRatios() { return getHiddenStateValues(); }
-    public double getLogCoverageCauchyWidth() { return logCoverageCauchyWidth; }
 }

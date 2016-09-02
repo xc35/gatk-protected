@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.tools.exome.segmentation;
 
+import com.google.cloud.dataflow.sdk.repackaged.com.google.common.primitives.Doubles;
 import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
 import org.broadinstitute.hellbender.utils.OptimizationUtils;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
@@ -10,7 +11,7 @@ import java.util.function.Function;
 /**
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
  */
-public final class CopyRatioSegmenter extends ClusteringGenomicHMMSegmenter<Double> {
+public final class CopyRatioSegmenter extends ScalarHMMSegmenter<Double> {
     private double logCoverageCauchyWidth;
 
     private static final double DEFAULT_INITIAL_CAUCHY_WIDTH = 0.1;
@@ -24,27 +25,23 @@ public final class CopyRatioSegmenter extends ClusteringGenomicHMMSegmenter<Doub
      *                          include in the model.  Hidden states are pruned as the model is learned.
      */
     public CopyRatioSegmenter(final int initialNumStates, final List<SimpleInterval> positions, final List<Double> data) {
-        super(initialNumStates, positions, data);
+        super(initialNumStates, positions, data, initialLog2CopyRatios(initialNumStates));
+        logCoverageCauchyWidth = DEFAULT_INITIAL_CAUCHY_WIDTH;
     }
 
     /**
      * evenly-spaced log-2 copy ratios
      * @param K the initial number of hidden states
      */
-    @Override
-    protected void initializeHiddenStateValues(final int K) {
-        hiddenStateValues = GATKProtectedMathUtils.createEvenlySpacedPoints(-3, 2, K);
-        hiddenStateValues[NEUTRAL_VALUE_INDEX] = NEUTRAL_LOG_2_COPY_RATIO;
+    private static List<Double> initialLog2CopyRatios(final int K) {
+        final List<Double> result = Doubles.asList(GATKProtectedMathUtils.createEvenlySpacedPoints(-3, 2, K));
+        result.set(NEUTRAL_VALUE_INDEX, NEUTRAL_LOG_2_COPY_RATIO);
+        return result;
     }
 
     @Override
-    protected void initializeAdditionalParameters() {
-        logCoverageCauchyWidth = DEFAULT_INITIAL_CAUCHY_WIDTH;
-    }
-
-    @Override
-    protected ClusteringGenomicHMM<Double> makeModel() {
-        return new CopyRatioHiddenMarkovModel(hiddenStateValues, weights, memoryLength, logCoverageCauchyWidth);
+    protected ClusteringGenomicHMM<Double, Double> makeModel() {
+        return new CopyRatioHiddenMarkovModel(Doubles.toArray(hiddenStateValues), weights, getMemoryLength(), logCoverageCauchyWidth);
     }
 
     @Override
@@ -55,8 +52,8 @@ public final class CopyRatioSegmenter extends ClusteringGenomicHMMSegmenter<Doub
             for (int position = 0; position < positions.size(); position++) {
                 for (int state = 0; state < weights.length; state++) {
                     final double eStepPosterior = eStep.pStateAtPosition(state, position);
-                    logLikelihood += eStepPosterior < NEGLIGIBLE_POSTERIOR_FOR_M_STEP ? 0 :eStepPosterior
-                            * CopyRatioHiddenMarkovModel.logEmissionProbability(data.get(position), hiddenStateValues[state], width);
+                    logLikelihood += eStepPosterior < NEGLIGIBLE_POSTERIOR_FOR_M_STEP ? 0 : eStepPosterior
+                            * CopyRatioHiddenMarkovModel.logEmissionProbability(data.get(position), hiddenStateValues.get(state), width);
                 }
             }
             return logLikelihood;
@@ -73,4 +70,9 @@ public final class CopyRatioSegmenter extends ClusteringGenomicHMMSegmenter<Doub
 
     @Override
     protected double maxHiddenStateValue() { return  MAX_LOG_2_COPY_RATIO; }
+
+    public double getLogCoverageCauchyWidth() {
+        return logCoverageCauchyWidth;
+    }
+
 }
