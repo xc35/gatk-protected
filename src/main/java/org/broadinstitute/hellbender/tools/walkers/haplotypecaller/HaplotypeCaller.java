@@ -9,6 +9,7 @@ import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.cmdline.programgroups.VariantProgramGroup;
 import org.broadinstitute.hellbender.engine.*;
 import org.broadinstitute.hellbender.engine.filters.ReadFilter;
+import org.broadinstitute.hellbender.utils.SimpleInterval;
 
 import java.util.List;
 
@@ -212,7 +213,7 @@ public final class HaplotypeCaller extends AssemblyRegionWalker {
         hcEngine.callRegion(region, featureContext).stream()
                 // Only include calls that start within the current read shard (as opposed to the padded regions around it).
                 // This is critical to avoid duplicating events that span shard boundaries!
-                .filter(call -> getCurrentReadShardBounds().contains(call))
+                .filter(call -> getCurrentReadShardBounds().contains(new SimpleInterval(call.getContig(), call.getStart(), call.getStart())))
                 .forEach(vcfWriter::add);
     }
 
