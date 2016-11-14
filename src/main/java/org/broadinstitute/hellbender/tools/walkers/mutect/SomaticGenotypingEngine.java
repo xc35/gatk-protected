@@ -8,8 +8,6 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.log4j.Logger;
 import org.broadinstitute.hellbender.engine.FeatureContext;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculator;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculatorProvider;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.AssemblyBasedCallerUtils;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.HaplotypeCallerGenotypingEngine;
 import org.broadinstitute.hellbender.utils.MathUtils;
@@ -43,12 +41,6 @@ public class SomaticGenotypingEngine extends HaplotypeCallerGenotypingEngine {
     private static final OptionalDouble NO_FIXED_TUMOR_ALT_FRACTION = OptionalDouble.empty();
     private static final OptionalDouble GERMLINE_HET_ALT_FRACTION = OptionalDouble.of(0.5);
 
-    // {@link GenotypingEngine} requires a non-null {@link AFCalculatorProvider} but this class doesn't need it.  Thus we make a dummy
-    private static AFCalculatorProvider DUMMY_AF_CALCULATOR_PROVIDER = new AFCalculatorProvider() {
-        @Override
-        public AFCalculator getInstance(final int ploidy, final int maximumAltAlleles) { return null; }
-    };
-
     private final static Logger logger = Logger.getLogger(SomaticGenotypingEngine.class);
 
     public SomaticGenotypingEngine(final SampleList samples,
@@ -56,7 +48,7 @@ public class SomaticGenotypingEngine extends HaplotypeCallerGenotypingEngine {
                                    final String tumorSampleName,
                                    final String matchedNormalSampleName,
                                    final String DEBUG_READ_NAME) {
-        super(MTAC, samples, DUMMY_AF_CALCULATOR_PROVIDER, !MTAC.doNotRunPhysicalPhasing);
+        super(MTAC, samples, !MTAC.doNotRunPhysicalPhasing);
         this.MTAC = MTAC;
         this.tumorSampleName = tumorSampleName;
         this.matchedNormalSampleName = matchedNormalSampleName;

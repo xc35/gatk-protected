@@ -13,7 +13,6 @@ import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.engine.ReferenceDataSource;
 import org.broadinstitute.hellbender.engine.ReferenceMemorySource;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.*;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculatorProvider;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.genotyper.AlleleList;
@@ -58,8 +57,8 @@ public class HaplotypeCallerGenotypingEngine extends GenotypingEngine<AssemblyBa
      * @param doPhysicalPhasing whether to try physical phasing.
      */
     public HaplotypeCallerGenotypingEngine(final AssemblyBasedCallerArgumentCollection configuration, final SampleList samples,
-                                           final AFCalculatorProvider afCalculatorProvider, final boolean doPhysicalPhasing) {
-        super(configuration, samples, afCalculatorProvider);
+                                           final boolean doPhysicalPhasing) {
+        super(configuration, samples);
         this.doPhysicalPhasing= doPhysicalPhasing;
         ploidyModel = new HomogeneousPloidyModel(samples,configuration.genotypeArgs.samplePloidy);
         genotypingModel = new IndependentSampleGenotypesModel();
@@ -190,7 +189,7 @@ public class HaplotypeCallerGenotypingEngine extends GenotypingEngine<AssemblyBa
             }
 
             final GenotypesContext genotypes = calculateGLsForThisEvent(readAlleleLikelihoods, mergedVC, noCallAlleles);
-            final VariantContext call = calculateGenotypes(new VariantContextBuilder(mergedVC).genotypes(genotypes).make(), getGLModel(mergedVC), header);
+            final VariantContext call = calculateGenotypes(new VariantContextBuilder(mergedVC).genotypes(genotypes).make(), header);
             if( call != null ) {
 
                 readAlleleLikelihoods = prepareReadAlleleLikelihoodsForAnnotation(readLikelihoods, perSampleFilteredReadList,
@@ -795,18 +794,4 @@ public class HaplotypeCallerGenotypingEngine extends GenotypingEngine<AssemblyBa
         return ploidyModel;
     }
 
-    /**
-     * Returns the genotyping-model used by this genotyping engine.
-     *
-     * @return never {@code null}.
-     */
-    public IndependentSampleGenotypesModel getGenotypingModel() {
-        return genotypingModel;
-    }
-
-    // check whether all alleles of a vc, including the ref but excluding the NON_REF allele, are one base in length
-    protected static GenotypeLikelihoodsCalculationModel getGLModel(final VariantContext vc) {
-        final boolean isSNP = vc.getAlleles().stream().filter(a -> !a.isSymbolic()).allMatch(a -> a.length() == 1);
-        return isSNP ? GenotypeLikelihoodsCalculationModel.SNP : GenotypeLikelihoodsCalculationModel.INDEL;
-    }
 }

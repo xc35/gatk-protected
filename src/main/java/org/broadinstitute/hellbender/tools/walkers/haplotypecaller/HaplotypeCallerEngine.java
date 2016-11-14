@@ -19,7 +19,6 @@ import org.broadinstitute.hellbender.engine.filters.WellformedReadFilter;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.walkers.annotator.*;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.*;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.FixedAFCalculatorProvider;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.readthreading.ReadThreadingAssembler;
 import org.broadinstitute.hellbender.utils.MathUtils;
 import org.broadinstitute.hellbender.utils.QualityUtils;
@@ -158,7 +157,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
         annotationEngine = VariantAnnotatorEngine.ofSelectedMinusExcluded(hcArgs.annotationGroupsToUse, hcArgs.annotationsToUse, hcArgs.annotationsToExclude, hcArgs.dbsnp.dbsnp, hcArgs.comps);
 
-        genotypingEngine = new HaplotypeCallerGenotypingEngine(hcArgs, samplesList, FixedAFCalculatorProvider.createThreadSafeProvider(hcArgs), ! hcArgs.doNotRunPhysicalPhasing);
+        genotypingEngine = new HaplotypeCallerGenotypingEngine(hcArgs, samplesList, ! hcArgs.doNotRunPhysicalPhasing);
         genotypingEngine.setAnnotationEngine(annotationEngine);
 
         referenceConfidenceModel = new ReferenceConfidenceModel(samplesList, readsHeader, hcArgs.indelSizeToEliminateInRefModel);
@@ -264,6 +263,8 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
     private void initializeActiveRegionEvaluationGenotyperEngine() {
         // create a UAC but with the exactCallsLog = null, so we only output the log for the HC caller itself, if requested
         final UnifiedArgumentCollection simpleUAC = new UnifiedArgumentCollection();
+
+        //TODO: whoops, shouldn't have deleted this method!!
         simpleUAC.copyStandardCallerArgsFrom(hcArgs);
 
         simpleUAC.outputMode = OutputMode.EMIT_VARIANTS_ONLY;
@@ -277,8 +278,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         // UGs engine with ploidy == 1
         simpleUAC.genotypeArgs.samplePloidy = Math.max(MINIMUM_PUTATIVE_PLOIDY_FOR_ACTIVE_REGION_DISCOVERY, hcArgs.genotypeArgs.samplePloidy);
 
-        activeRegionEvaluationGenotyperEngine = new MinimalGenotypingEngine(simpleUAC, samplesList,
-                FixedAFCalculatorProvider.createThreadSafeProvider(simpleUAC));
+        activeRegionEvaluationGenotyperEngine = new MinimalGenotypingEngine(simpleUAC, samplesList);
         activeRegionEvaluationGenotyperEngine.setLogger(logger);
     }
 
@@ -418,16 +418,10 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         }
 
         final List<Allele> alleles = Arrays.asList(FAKE_REF_ALLELE , FAKE_ALT_ALLELE);
-        final double isActiveProb;
 
-        if (genotypes.size() == 1) {
-            // Faster implementation avoiding the costly and over complicated Exact AFCalculator machinery:
-            // This is the case when doing GVCF output.
-            isActiveProb = activeRegionEvaluationGenotyperEngine.calculateSingleSampleRefVsAnyActiveStateProfileValue(genotypes.get(0).getLikelihoods().getAsVector());
-        } else {
-            final VariantCallContext vcOut = activeRegionEvaluationGenotyperEngine.calculateGenotypes(new VariantContextBuilder("HCisActive!", context.getContig(), context.getLocation().getStart(), context.getLocation().getEnd(), alleles).genotypes(genotypes).make(), GenotypeLikelihoodsCalculationModel.SNP, readsHeader);
-            isActiveProb = vcOut == null ? 0.0 : QualityUtils.qualToProb(vcOut.getPhredScaledQual());
-        }
+        //TODO: can we optimize the single-sample (biallelic? SNP?) active region determination case in AlleleFrequencyCalculator?
+        final VariantCallContext vcOut = activeRegionEvaluationGenotyperEngine.calculateGenotypes(new VariantContextBuilder("HCisActive!", context.getContig(), context.getLocation().getStart(), context.getLocation().getEnd(), alleles).genotypes(genotypes).make(), readsHeader);
+        final double isActiveProb = vcOut == null ? 0.0 : QualityUtils.qualToProb(vcOut.getPhredScaledQual());
         return new ActivityProfileState(ref.getInterval(), isActiveProb, averageHQSoftClips.mean() > AVERAGE_HQ_SOFTCLIPS_HQ_BASES_THRESHOLD ? ActivityProfileState.Type.HIGH_QUALITY_SOFT_CLIPS : ActivityProfileState.Type.NONE, averageHQSoftClips.mean() );
     }
 

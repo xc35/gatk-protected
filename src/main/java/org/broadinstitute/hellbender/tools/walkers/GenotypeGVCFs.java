@@ -12,8 +12,10 @@ import org.broadinstitute.hellbender.engine.ReadsContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.engine.VariantWalker;
 import org.broadinstitute.hellbender.tools.walkers.annotator.VariantAnnotatorEngine;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.*;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.GeneralPloidyFailOverAFCalculatorProvider;
+import org.broadinstitute.hellbender.tools.walkers.genotyper.GenotypeCalculationArgumentCollection;
+import org.broadinstitute.hellbender.tools.walkers.genotyper.GenotypingEngine;
+import org.broadinstitute.hellbender.tools.walkers.genotyper.MinimalGenotypingEngine;
+import org.broadinstitute.hellbender.tools.walkers.genotyper.UnifiedArgumentCollection;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.genotyper.IndexedSampleList;
 import org.broadinstitute.hellbender.utils.genotyper.SampleList;
@@ -109,7 +111,7 @@ public final class GenotypeGVCFs extends VariantWalker {
         final VCFHeader inputVCFHeader = getHeaderForVariants();
         final SampleList samples = new IndexedSampleList(inputVCFHeader.getGenotypeSamples()); //todo should this be getSampleNamesInOrder?
 
-        genotypingEngine = new MinimalGenotypingEngine(createUAC(), samples, new GeneralPloidyFailOverAFCalculatorProvider(genotypeArgs));
+        genotypingEngine = new MinimalGenotypingEngine(createUAC(), samples);
         annotationEngine = VariantAnnotatorEngine.ofSelectedMinusExcluded(Collections.emptyList(), annotationsToUse, Collections.<String>emptyList(), dbsnp.dbsnp, Collections.emptyList());
         merger = new ReferenceConfidenceVariantContextMerger();
 
@@ -159,7 +161,7 @@ public final class GenotypeGVCFs extends VariantWalker {
         VariantContext result = originalVC;
         if ( result.isVariant() ) {
             // only re-genotype polymorphic sites
-            VariantContext regenotypedVC = genotypingEngine.calculateGenotypes(result, GenotypeLikelihoodsCalculationModel.SNP, null);
+            VariantContext regenotypedVC = genotypingEngine.calculateGenotypes(result, null);
             if (regenotypedVC == null || regenotypedVC.isSymbolic()) {
                 if (!includeNonVariants) {
                     return null;
