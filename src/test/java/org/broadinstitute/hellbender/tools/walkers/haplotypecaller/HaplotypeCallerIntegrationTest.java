@@ -1,6 +1,8 @@
 package org.broadinstitute.hellbender.tools.walkers.haplotypecaller;
 
 import htsjdk.variant.variantcontext.VariantContext;
+import htsjdk.variant.vcf.VCFCodec;
+import org.bdgenomics.formats.avro.Variant;
 import org.broadinstitute.hellbender.CommandLineProgramTest;
 import org.broadinstitute.hellbender.engine.FeatureDataSource;
 import org.broadinstitute.hellbender.engine.ReadsDataSource;
@@ -13,7 +15,9 @@ import org.testng.annotations.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class HaplotypeCallerIntegrationTest extends CommandLineProgramTest {
@@ -276,7 +280,7 @@ public class HaplotypeCallerIntegrationTest extends CommandLineProgramTest {
 
         runCommandLine(args);
 
-        try ( final ReadsDataSource bamOutReadsSource = new ReadsDataSource(bamOutput.toPath()) ) {
+        try ( final ReadsDataSource bamOutReadsSource = new ReadsDataSource(bamOutput) ) {
             int actualBamoutNumReads = 0;
             for ( final GATKRead read : bamOutReadsSource ) {
                 ++actualBamoutNumReads;
@@ -310,35 +314,38 @@ public class HaplotypeCallerIntegrationTest extends CommandLineProgramTest {
     /*
      * Calculate rough concordance between two vcfs, comparing only the positions, alleles, and the first genotype.
      */
-    public static double calculateConcordance( final File actual, final File expected ) {
-        final Set<String> actualVCFKeys = new HashSet<>();
-        final Set<String> expectedVCFKeys = new HashSet<>();
+    private double calculateConcordance( final File actual, final File expected ) {
+        final HashMap<String, VariantContext> actualVCFKeys = new HashMap<>();
+        final HashMap<String, VariantContext> expectedVCFKeys = new HashMap<>();
         int concordant = 0;
         int discordant = 0;
-
+        int falsePositives = 0;
+        int falseNegatives = 0;
         try ( final FeatureDataSource<VariantContext> actualSource = new FeatureDataSource<>(actual);
               final FeatureDataSource<VariantContext> expectedSource = new FeatureDataSource<>(expected) ) {
 
             for ( final VariantContext vc : actualSource ) {
-                actualVCFKeys.add(keyForVariant(vc));
+                actualVCFKeys.put(keyForVariant(vc), vc);
             }
 
             for ( final VariantContext vc : expectedSource ) {
-                expectedVCFKeys.add(keyForVariant(vc));
+                expectedVCFKeys.put(keyForVariant(vc), vc);
             }
 
-            for ( final String vcKey : actualVCFKeys ) {
-                if ( ! expectedVCFKeys.contains(vcKey) ) {
+            for ( final Map.Entry<String, VariantContext> entry : actualVCFKeys.entrySet() ) {
+                if ( ! expectedVCFKeys.containsKey(entry.getKey()) ) {
                     ++discordant;
+                    ++falsePositives;
                 }
                 else {
                     ++concordant;
                 }
             }
 
-            for ( final String vcKey : expectedVCFKeys ) {
-                if ( ! actualVCFKeys.contains(vcKey) ) {
+            for ( final Map.Entry<String, VariantContext> entry : expectedVCFKeys.entrySet() ) {
+                if ( ! actualVCFKeys.containsKey(entry.getKey()) ) {
                     ++discordant;
+                    ++falseNegatives;
                 }
             }
         }
