@@ -10,8 +10,6 @@ import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
  */
 final class ContaminationEstimate {
     private final double[] log10Likelihoods;   // log10Likelihoods at discrete contamination levels
-    private double populationFit = 0.0;
-    private String populationName;
 
     // precalculate the 128 possible values of epsilon
     private final static double[] linearSpaceErrorProbs = new IndexRange(0, Byte.MAX_VALUE + 1).mapToDouble(n -> Math.pow(10.0, -n/10.0));
@@ -24,13 +22,11 @@ final class ContaminationEstimate {
                                  final double maf,  //TODO: I think maf == 0 is not an issue but double-check
                                  final ReadPileup pileup,
                                  final byte uncontaminatedAllele,
-                                 final byte hapmapAlt,
-                                 final String popName) {
-        Utils.validateArg(0.0 <= maf && maf <= 1.0, () -> "Invalid allele Freq: must be between 0 and 1 (inclusive), maf was " + maf + " for population " + popName);
+                                 final byte hapmapAlt) {
+        Utils.validateArg(0.0 <= maf && maf <= 1.0, () -> "Invalid allele Freq: must be between 0 and 1 (inclusive), maf was " + maf);
 
         //TODO: this is log, not log10 -- everything is inconsistent!!!!!
         log10Likelihoods = new double[(int)Math.ceil(100/precision)+1];
-        populationName = popName;
 
         final byte[] quals = pileup.getBaseQuals();
         int qualOffset = 0;
@@ -43,11 +39,9 @@ final class ContaminationEstimate {
                 if (base == uncontaminatedAllele) {
                     log10Likelihoods[index] += Math.log((1.0 - contaminationRate) * (1.0 - pError) +
                             contaminationRate * (maf * (1.0 - pError) + (1.0 - maf) * pError/3.0));
-                    populationFit += Math.log(pError);
                 } else if(hapmapAlt == base) {
                     log10Likelihoods[index] += Math.log((1.0 - contaminationRate) * pError / 3.0 +
                             contaminationRate * (maf * pError/3.0 + (1.0 - maf) * (1.0 - pError)));
-                    populationFit += Math.log(maf + pError);
                 }
             }
         }
@@ -55,18 +49,6 @@ final class ContaminationEstimate {
 
     public double[] getBins() {
         return log10Likelihoods;
-    }
-
-    public void setPopulationFit(double populationFit) {
-        this.populationFit = populationFit;
-    }
-
-    public double getPopulationFit() {
-        return populationFit;
-    }
-
-    public String getPopulationName() {
-        return populationName;
     }
 
     //TODO: there has to be a library to replace this

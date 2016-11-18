@@ -18,7 +18,6 @@ import org.broadinstitute.hellbender.utils.genotyper.SampleList;
 import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
 
-import java.io.PrintStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -37,12 +36,11 @@ import java.util.stream.Collectors;
  *   ./gatk-launch
  *     ContEst \
  *     -R reference.fasta \
- *     -I eval:tumor.bam \
- *     -I genotype:normal.bam \
- *     --popFile populationAlleleFrequencies.vcf \
- *     -L populationSites.interval_list
+ *     -I estimate_contamination.bam \
+ *     -exac exac.vcf \
+ *     -L populationSites.interval_list \\TODO: do we need this arg and the next?
  *     [-L targets.interval_list] \
- *     -isr INTERSECTION \
+ *     -isr INTERSECTION \  //TODO: what's this?
  *     -o output.txt
  * </pre>
  *
@@ -60,27 +58,14 @@ import java.util.stream.Collectors;
 public final class ContEst extends LocusWalker {
     protected static final Logger logger = LogManager.getLogger(ContEst.class);
 
-    //TODO: what about Lane??
-    public enum AggregationLevel {
-        SAMPLE,    // calculate contamination for each sample
-        READGROUP, // for each read group
-        BAM        // for all inputs as a single source
-    }
+    public enum AggregationLevel { SAMPLE, READGROUP, BAM }
 
     // the population information; the allele frequencies for each position in known populations
-    @Argument(fullName="popfile", shortName = "pf", doc="the variant file containing information about the population allele frequencies", optional = false)
-    public FeatureInput<VariantContext> populationAlleleFrequencies;
+    @Argument(shortName = "exac", doc="subsetted exac vcf containing population allele frequencies", optional = false)
+    public FeatureInput<VariantContext> exac;
 
-    //FIXME - this is pretty clumsy because we don't have tagged inputs for bams yet
     @Argument(fullName = "evalSampleName", optional = false, doc = "eval sample name as in BAM header")
     public String evalSample;
-
-    @Argument(fullName = "matchedNormalSampleName", optional = false, doc = "matched normal sample name as in BAM header")
-    public String matchedNormalSample;
-
-    // ------------------------------------------------------------------------------------------------------------------------------------------------------
-    // outputs and args
-    // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
     @Argument(fullName = "min_qscore", optional = true, doc = "threshold for minimum base quality score")
     public int MIN_QSCORE = 20;
@@ -97,27 +82,15 @@ public final class ContEst extends LocusWalker {
     @Argument(shortName = "pc", fullName = "precision", doc = "the degree of precision to which the contamination tool should estimate (e.g. the bin size)", optional = true)
     private double precision = 0.01;
 
-    @Argument(shortName = "lf", fullName = "likelihood_file", doc = "write the likelihood values to the specified location", optional = true)
-    public PrintStream likelihoodFile = null;
-
-    @Argument(shortName = "population", fullName = "population", doc = "evaluate contamination for just a single contamination population", optional = true)
-    public String population = "CEU";
-
-    //TODO: populations should be enums
-    private static final String[] ALL_POPULATIONS = {"ALL", "CHD", "LWK", "CHB", "CEU", "MXL", "GIH", "MKK", "TSI", "CLM", "GBR", "ASW", "YRI", "IBS", "FIN", "PUR", "JPT", "CHS"};
-
-    // ------------------------------------------------------------------------------------------------------------------------------------------------------
-    // global variables to the walker
-    // ------------------------------------------------------------------------------------------------------------------------------------------------------
     private static final Allele[] ALLELES = {Allele.create((byte) 'A'), Allele.create((byte) 'C'), Allele.create((byte) 'G'), Allele.create((byte) 'T')};
 
     private final Map<String, AggregationLevel> contaminationNames = new LinkedHashMap<>();       // a list, containing the contamination names, be it read groups or bam file names
 
     Collection<String> allSamples;
     Collection<String> allReadGroups;
-
-    //TODO:
-    private String[] populationsToEvaluate;
+    boolean aggregateAtBamLevel;
+    boolean aggregteAtSampleLevel;
+    boolean aggregateAtReadGroupLevel;
 
     int countGenotypeHomVar = 0;
 
@@ -126,29 +99,17 @@ public final class ContEst extends LocusWalker {
 
     @Override
     public void onTraversalStart() {
-        verifySamples();
-
-        if (aggregations == null) {
-            aggregations = new LinkedHashSet<>();
-            aggregations.add(AggregationLevel.BAM);
+        final SampleList samplesList = new IndexedSampleList(new ArrayList<>(ReadUtils.getSamplesFromHeader(getHeaderForReads())));
+        if (!samplesList.asListOfSamples().contains(evalSample)) {
+            throw new UserException.BadInput("BAM header sample names " + samplesList.asListOfSamples() + "does not contain given tumor" + " sample name " + evalSample);
         }
+
+        aggregateAtBamLevel = aggregations == null || aggregations.contains(AggregationLevel.BAM);
+        aggregteAtSampleLevel = aggregations.contains(AggregationLevel.SAMPLE);
+        aggregateAtReadGroupLevel = aggregations.contains(AggregationLevel.READGROUP);
 
         allReadGroups = getHeaderForReads().getReadGroups().stream().map(SAMReadGroupRecord::getId).collect(Collectors.toList());
         allSamples = getHeaderForReads().getReadGroups().stream().map(SAMReadGroupRecord::getSample).distinct().collect(Collectors.toList());
-
-        this.populationsToEvaluate = (population == null || "EVERY".equals(population)) ? ALL_POPULATIONS : new String[]{population};
-
-    }
-
-    private void verifySamples() {
-        final SampleList samplesList = new IndexedSampleList(new ArrayList<>(ReadUtils.getSamplesFromHeader(getHeaderForReads())));
-        if (!samplesList.asListOfSamples().contains(evalSample)) {
-            throw new UserException.BadInput("BAM header sample names " + samplesList.asListOfSamples() + "does not contain given tumor" +
-                    " sample name " + evalSample);
-        } else if (!samplesList.asListOfSamples().contains(matchedNormalSample)) {
-            throw new UserException.BadInput("BAM header sample names " + samplesList.asListOfSamples() + "does not contain given normal" +
-                    " sample name " + matchedNormalSample);
-        }
     }
 
     /**
@@ -161,13 +122,13 @@ public final class ContEst extends LocusWalker {
      */
     @Override
     public void apply(final AlignmentContext context, final ReferenceContext ref, final FeatureContext features) {
-        final List<VariantContext> vcs = features.getValues(populationAlleleFrequencies);
+        final List<VariantContext> vcs = features.getValues(exac);
         if (vcs.isEmpty()) {
             return;
         }
 
         final VariantContext popVC = vcs.get(0);
-        final Genotype genotype = getGenotypeFromMatchedNormal(context, ref, getHeaderForReads());
+        final Genotype genotype = getGenotype(context, ref, getHeaderForReads());
 
         // only use homozygous sites
         if (genotype == null || !genotype.isHomVar()) {
@@ -179,23 +140,17 @@ public final class ContEst extends LocusWalker {
         // only use non-reference sites
         final byte myBase = genotype.getAllele(0).getBases()[0];
 
-        // our map of contamination results
-        final Map<String, Map<String, ContaminationStats>> contaminationResults = new LinkedHashMap<>();
+        final Map<String, ContaminationStats> contaminationResults = new LinkedHashMap<>();
         final ReadPileup wholePileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads());
 
         // if we're by-lane, get those stats
         for (final Map.Entry<String, AggregationLevel> namePair : contaminationNames.entrySet()) {
             final ReadPileup pile = getPileupForAggregationLevel(wholePileup, namePair);
-            final ReadPileup filteredPile =
-                    pile.makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
+            final ReadPileup filteredPile = pile.makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
 
-            final Map<String, ContaminationStats> results = calcStats(
-                            filteredPile,
-                            myBase,
-                            popVC,
-                    populationsToEvaluate);
+            final ContaminationStats results = calcStats(filteredPile, myBase, popVC);
 
-            if (!results.isEmpty()) {
+            if (results != null) {
                 contaminationResults.put(namePair.getKey(), results);
             }
         }
@@ -213,8 +168,8 @@ public final class ContEst extends LocusWalker {
         }
     }
 
-    private Genotype getGenotypeFromMatchedNormal(final AlignmentContext context, final ReferenceContext referenceContext, final SAMFileHeader header) {
-        final ReadPileup pileup = context.getBasePileup().getPileupForSample(matchedNormalSample, header);
+    private Genotype getGenotype(final AlignmentContext context, final ReferenceContext referenceContext, final SAMFileHeader header) {
+        final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, header);
         if (pileup == null || pileup.isEmpty()) {
             return null;
         }
@@ -256,43 +211,11 @@ public final class ContEst extends LocusWalker {
         }
     }
 
-    private static PopulationFrequencyInfo parsePopulationFrequencyInfo(final VariantContext variantContext, final String population) {
-        PopulationFrequencyInfo info = null;
-
-        @SuppressWarnings("unchecked")
-        final List<String> values = (List<String>) variantContext.getAttribute(population);
-
-        if (values != null) {
-            byte majorAllele = 0;
-            byte minorAllele = 0;
-            double maf = -1;
-
-            for (String str : values) {
-                // strip off the curly braces and trim whitespace
-                if (str.startsWith("{")) {
-                    str = str.substring(1, str.length());
-                }
-                if (str.contains("}")) {
-                    str = str.substring(0, str.indexOf("}"));
-                }
-                str = str.trim();
-                final String[] spl = str.split("=");
-
-                final byte allele = (byte) spl[0].trim().charAt(0);
-                final double af = Double.valueOf(spl[1].trim());
-
-                if (af <= 0.5 && minorAllele == 0) {
-                    minorAllele = allele;
-                    maf = af;
-                } else {
-                    majorAllele = allele;
-                }
-
-            }
-
-            info = new PopulationFrequencyInfo(majorAllele, minorAllele, maf);
-        }
-        return info;
+    private static PopulationFrequencyInfo parseExACInfo(final VariantContext variantContext) {
+        // get the ref and alt allele from an ExAC (subsetted) vcf VariantContext
+        // for simplicity, we should subset to alleles that are uncommon (maf < some threshold like 10%) in all populations
+        // that way we can simply take the overall human maf
+        return new PopulationFrequencyInfo(majorAllele, minorAllele, maf);
     }
 
 
@@ -300,66 +223,29 @@ public final class ContEst extends LocusWalker {
      * Calculate the contamination values per division, be it lane, meta, sample, etc
      * @param pileup the pileup
      * @param myAllele the allele we have (our hom var genotype allele)
-     * @param popVC the population variant context from hapmap
-     * @param pops contaminating populations to run over
+     * @param exacVC the population variant context from hapmap
      * @return a mapping of each target population to their estimated contamination
      */
-    //TODO: I hate that thsi operates via a side effect of printing
-    private Map<String, ContaminationStats> calcStats(final ReadPileup pileup,
-                                                      final byte myAllele,
-                                                      final VariantContext popVC,
-                                                      final String[] pops) {
-        final Map<String, ContaminationStats> ret = new LinkedHashMap<>();
-
-        for (final String pop : pops) {
-            final PopulationFrequencyInfo info = parsePopulationFrequencyInfo(popVC, pop);
+    private ContaminationStats calcStats(final ReadPileup pileup, final byte myAllele, final VariantContext exacVC) {
+            final PopulationFrequencyInfo info = parseExACInfo(exacVC);
             final double alleleFreq = info.getMinorAlleleFrequency();
-            if (alleleFreq > 0.5) {
-                throw new RuntimeException("Minor allele frequency is greater than 0.5, this is an error; we saw AF of " + alleleFreq);
-            }
 
             final long majorCounts = counter.get(Nucleotide.valueOf(info.getMajorAllele()));
             final long minorCounts = counter.get(Nucleotide.valueOf(info.getMinorAllele()));
-            final long otherCounts = pileup.size() - majorCounts - minorCounts;
 
             // only use sites where this is the minor allele
             if (myAllele == info.minorAllele) {
-                final ContaminationEstimate est = new ContaminationEstimate(precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele(), pop);
-                ret.put(pop, new ContaminationStats(1, alleleFreq, minorCounts, majorCounts, otherCounts, counter, est));
+                final ContaminationEstimate est = new ContaminationEstimate(precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele());
+                return new ContaminationStats(minorCounts, majorCounts, counter, est);
+            } else {
+                return null;
             }
-        }
-        return ret;
     }
 
-    /**
-     * Output all the stats to the appropriate files
-     */
     @Override
     public Object onTraversalSuccess() {
-        // filter out lanes / samples that don't have the minBaseCount
-        final Map<String, Map<String, ContaminationStats>> cleanedMap = new LinkedHashMap<>();
-        for (final Map.Entry<String, Map<String, ContaminationStats>> entry : accumulatedResult.getStats().entrySet()) {
-
-            final Map<String, ContaminationStats> newMap = new LinkedHashMap<>();
-
-            final Map<String, ContaminationStats> statMap = entry.getValue();
-            for (final String popKey : statMap.keySet()) {
-                final ContaminationStats stat = statMap.get(popKey);
-                    newMap.put(popKey, stat);
-            }
-
-            cleanedMap.put(entry.getKey(), newMap);
-
-        }
-
-        // output results at the end, based on the input parameters
-        accumulatedResult.setStats(cleanedMap);
         accumulatedResult.outputReport(precision, BETA_THRESHOLD);
-        if (likelihoodFile != null) {
-            accumulatedResult.writeCurves(likelihoodFile);
-        }
         logger.info("Homozygous variant sites: " + countGenotypeHomVar);
-
-        return accumulatedResult;
+        return "SUCCESS";
     }
 }
