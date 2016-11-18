@@ -254,6 +254,23 @@ public class GATKProtectedMathUtils {
         return minIndex;
     }
 
+    public static int maxIndex(final int ... values) {
+        Utils.nonNull(values);
+        if (values.length == 0) {
+            return -1;
+        }
+        int maxValue = values[0];
+        int maxIndex = 0;
+        for (int i = 0; i < values.length; i++) {
+            final int nextValue = values[i];
+            if (nextValue > maxValue) {
+                maxValue = nextValue;
+                maxIndex = i;
+            }
+        }
+        return maxIndex;
+    }
+
     /**
      * Given an int array returns the difference between the second smallest element
      * and the smallest element.

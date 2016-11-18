@@ -73,6 +73,14 @@ public enum Nucleotide {
             counts = new long[Nucleotide.values().length];
         }
 
+        // add counts from another Counter
+        public void increment(final Counter other) {
+            for (final Nucleotide nucleotide : Nucleotide.values()) {
+                final int index = nucleotide.ordinal();
+                this.counts[index] += other.counts[index];
+            }
+        }
+
         /**
          * Increases by 1 the count for a nucleotide.
          * @param nucleotide the target nucleotide.

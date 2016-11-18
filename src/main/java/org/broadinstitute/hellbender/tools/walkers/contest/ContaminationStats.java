@@ -1,7 +1,6 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
-import htsjdk.samtools.util.Locatable;
-import org.broadinstitute.hellbender.utils.Utils;
+import org.broadinstitute.hellbender.utils.Nucleotide;
 
 /**
  * a class that tracks our contamination stats; both the estimate of contamination, as well as the number of sites and other
@@ -9,40 +8,25 @@ import org.broadinstitute.hellbender.utils.Utils;
  */
 public final class ContaminationStats {
     private static final int ALLELE_COUNT = 4;
-    private Locatable site;
     private int numberOfSites = 0;
     private double sumOfAlleleFrequency = 0.0;
     private long basesFor = 0L;
     private long basesAgainst = 0L;
     private long basesOther = 0L;
     private ContaminationEstimate contaminationEstimate;
-    private final int[] alleleBreakdown;
+    private final Nucleotide.Counter alleleBreakdown;
 
-    public ContaminationStats(Locatable site, int numberOfSites, double sumOfAlleleFrequency, long basesFor, long basesAgainst, long basesOther, int alleleBreakdown[], ContaminationEstimate estimate) {
-        this.site = site;
+    public ContaminationStats(int numberOfSites, double sumOfAlleleFrequency, long basesFor, long basesAgainst, long basesOther, Nucleotide.Counter alleleBreakdown, ContaminationEstimate estimate) {
         this.numberOfSites = numberOfSites;
         this.sumOfAlleleFrequency = sumOfAlleleFrequency;
         this.basesFor = basesFor;
         this.basesAgainst = basesAgainst;
         this.contaminationEstimate = estimate;
-        Utils.validateArg(alleleBreakdown.length == ALLELE_COUNT, () -> "Allele breakdown should have length " + ALLELE_COUNT);
         this.alleleBreakdown = alleleBreakdown;
-    }
-
-    public int getNumberOfSites() {
-        return numberOfSites;
-    }
-
-    public double getMinorAlleleFrequency() {
-        return sumOfAlleleFrequency /(double)numberOfSites;
     }
 
     public long getBasesMatching() {
         return basesFor;
-    }
-
-    public long getBasesOther() {
-        return basesOther;
     }
 
     public long getBasesMismatching() {
@@ -53,10 +37,6 @@ public final class ContaminationStats {
         return contaminationEstimate;
     }
 
-    public Locatable getSite() {
-        return site;
-    }
-
     public void add(ContaminationStats other) {
         if (other == null) return;
         this.numberOfSites          += other.numberOfSites;
@@ -64,7 +44,7 @@ public final class ContaminationStats {
         this.basesOther             += other.basesOther;
         this.basesFor               += other.basesFor;
         this.basesAgainst           += other.basesAgainst;
-        for (int x = 0; x < ALLELE_COUNT; x++) this.alleleBreakdown[x] += other.alleleBreakdown[x];
+        this.alleleBreakdown.increment(other.alleleBreakdown);
         for (int i = 0; i < this.contaminationEstimate.getBins().length; i++) {
             this.contaminationEstimate.getBins()[i] += other.contaminationEstimate.getBins()[i];
         }
