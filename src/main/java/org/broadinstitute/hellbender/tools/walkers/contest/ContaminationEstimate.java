@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
+import org.apache.commons.math3.distribution.BetaDistribution;
 import org.apache.commons.math3.util.MathArrays;
 import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.MathUtils;
@@ -61,14 +62,6 @@ final class ContaminationEstimate {
 
     public double[] getBins() {
         return log10Likelihoods;
-    }
-
-    public long getBasesMatching() {
-        return basesFor;
-    }
-
-    public long getBasesMismatching() {
-        return basesAgainst;
     }
 
     public void add(ContaminationEstimate other) {

@@ -1,13 +1,11 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
-import org.apache.commons.math3.distribution.BetaDistribution;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.MathUtils;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * our contamination results object; this object aggregates the results of the contamination run over lanes, samples,
@@ -16,32 +14,13 @@ import java.util.stream.Collectors;
 public final class ContaminationResults {
     protected static final Logger logger = LogManager.getLogger(ContaminationResults.class);
 
-    public static class ContaminationData {
-        private final double[] bins;
-        private final double p;
-
-        public double[] getBins() {
-            return bins;
-        }
-
-        public double getP() {
-            return p;
-        }
-
-        public ContaminationData(final long basesMatching, final long basesMismatching, final double[] bins) {
-            this.bins = bins;
-
-            final BetaDistribution dist = new BetaDistribution(basesMismatching + 1, basesMatching + 1);
-            this.p = 1.0d - dist.cumulativeProbability(0.5d);
-        }
-    }
 
     // a map of our contamination targets and their stats
     // key: aggregation entity ("BAM", sample name, or lane name)
     // value: ContaminationStats (whcih
     private Map<String, ContaminationEstimate> stats = new HashMap<>();
 
-    final Map<String, List<ContaminationData>> storedData = new HashMap<String, List<ContaminationData>>();
+    final Map<String, List<ContaminationEstimate>> storedData = new HashMap<>();
 
     /**
      * add to the stats
@@ -59,8 +38,7 @@ public final class ContaminationResults {
                 storedData.put(aggregationKey, new ArrayList<>());
             }
 
-            final double[] newData = Arrays.copyOf(newStats.getBins(), newStats.getBins().length);
-            storedData.get(aggregationKey).add(new ContaminationData(newStats.getBasesMatching(), newStats.getBasesMismatching(), newData));
+            storedData.get(aggregationKey).add(newStats);
 
             // merge the sets
             if (stats.containsKey(aggregationKey)) {
@@ -71,28 +49,24 @@ public final class ContaminationResults {
         }
     }
 
-    /**
-     * output the contamination data, and return the contamination data
-     */
-    public void outputReport(final double precision, final double betaThreshold) {
+
+    public void outputReport(final double precision) {
 
         //TODO: logger.info isn't correct -- use a TableUtils method
         logger.info("name\tpopulation\tpopulation_fit\tcontamination\tconfidence_interval_95_width\tconfidence_interval_95_low\tconfidence_interval_95_high\tsites");
 
+        //TODO: very confused why stats = entry.getValue isn't used
+        // TODO: and why have both storedData and stats???
         for (final Map.Entry<String, ContaminationEstimate> entry : stats.entrySet()) {
             final ContaminationEstimate stats = entry.getValue();
             final String aggregationLevel = entry.getKey();
 
-            final List<ContaminationData> newStats = storedData.get(aggregationLevel);
+            final List<ContaminationEstimate> data = storedData.get(aggregationLevel);
             final String pm = "%3." + Math.round(Math.log10(1/precision)) +"f";
 
-            final int bins = newStats.iterator().next().getBins().length;
+            final int bins = data.iterator().next().getBins().length;
 
-            // sort the collection
-            Collections.sort(newStats);
-
-            final List<ContaminationData> data = newStats.stream().filter(d -> d.getP() < betaThreshold).collect(Collectors.toList());
-
+            //TODO: sort before output?
 
             final double[][] matrix = new double[bins][data.size()];
 

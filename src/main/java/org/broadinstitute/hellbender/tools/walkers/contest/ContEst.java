@@ -73,9 +73,6 @@ public final class ContEst extends LocusWalker {
     @Argument(fullName = "min_mapq", optional = true, doc = "threshold for minimum mapping quality score")
     public int MIN_MAPQ = 20;
 
-    @Argument(fullName = "beta_threshold", doc = "threshold for p(f>=0.5) to trim", optional = true)
-    public double BETA_THRESHOLD = 0.95;
-
     @Argument(shortName = "agg", fullName = "aggregations", doc = "set to BAM (default), SAMPLE or READGROUP to produce per-bam, per-sample or per-lane estimates", optional = true)
     private Set<AggregationLevel> aggregations = null;
 
@@ -83,8 +80,6 @@ public final class ContEst extends LocusWalker {
     private double precision = 0.01;
 
     private static final Allele[] ALLELES = {Allele.create((byte) 'A'), Allele.create((byte) 'C'), Allele.create((byte) 'G'), Allele.create((byte) 'T')};
-
-    private final Map<String, AggregationLevel> contaminationNames = new LinkedHashMap<>();       // a list, containing the contamination names, be it read groups or bam file names
 
     Collection<String> allSamples;
     Collection<String> allReadGroups;
@@ -95,7 +90,6 @@ public final class ContEst extends LocusWalker {
     int countGenotypeHomVar = 0;
 
     ContaminationResults accumulatedResult = new ContaminationResults();
-
 
     @Override
     public void onTraversalStart() {
@@ -252,7 +246,7 @@ public final class ContEst extends LocusWalker {
 
     @Override
     public Object onTraversalSuccess() {
-        accumulatedResult.outputReport(precision, BETA_THRESHOLD);
+        accumulatedResult.outputReport(precision);
         logger.info("Homozygous variant sites: " + countGenotypeHomVar);
         return "SUCCESS";
     }
