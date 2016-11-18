@@ -89,7 +89,7 @@ public final class ContEst extends LocusWalker {
     Collection<String> allSamples;
     Collection<String> allReadGroups;
     boolean aggregateAtBamLevel;
-    boolean aggregteAtSampleLevel;
+    boolean aggregateAtSampleLevel;
     boolean aggregateAtReadGroupLevel;
 
     int countGenotypeHomVar = 0;
@@ -105,7 +105,7 @@ public final class ContEst extends LocusWalker {
         }
 
         aggregateAtBamLevel = aggregations == null || aggregations.contains(AggregationLevel.BAM);
-        aggregteAtSampleLevel = aggregations.contains(AggregationLevel.SAMPLE);
+        aggregateAtSampleLevel = aggregations.contains(AggregationLevel.SAMPLE);
         aggregateAtReadGroupLevel = aggregations.contains(AggregationLevel.READGROUP);
 
         allReadGroups = getHeaderForReads().getReadGroups().stream().map(SAMReadGroupRecord::getId).collect(Collectors.toList());
@@ -140,32 +140,39 @@ public final class ContEst extends LocusWalker {
         // only use non-reference sites
         final byte myBase = genotype.getAllele(0).getBases()[0];
 
-        final Map<String, ContaminationStats> contaminationResults = new LinkedHashMap<>();
-        final ReadPileup wholePileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads());
+        final Map<String, ContaminationEstimate> contaminationResults = new LinkedHashMap<>();
+        final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads())
+                .makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
 
-        // if we're by-lane, get those stats
-        for (final Map.Entry<String, AggregationLevel> namePair : contaminationNames.entrySet()) {
-            final ReadPileup pile = getPileupForAggregationLevel(wholePileup, namePair);
-            final ReadPileup filteredPile = pile.makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
 
-            final ContaminationStats results = calcStats(filteredPile, myBase, popVC);
-
+        if (aggregateAtBamLevel) {
+            final ContaminationEstimate results = calcStats(pileup, myBase, popVC);
             if (results != null) {
-                contaminationResults.put(namePair.getKey(), results);
+                contaminationResults.put("BAM", results);
             }
         }
-        // add this site to our collected stats
-        accumulatedResult.add(contaminationResults);
-    }
 
-    private ReadPileup getPileupForAggregationLevel(ReadPileup wholePileup, Map.Entry<String, AggregationLevel> namePair) {
-        if (namePair.getValue() == AggregationLevel.READGROUP) {
-            return wholePileup.makeFilteredPileup(pe -> Objects.equals(pe.getRead().getReadGroup(), namePair.getKey()));
-        } else if (namePair.getValue() == AggregationLevel.SAMPLE) {
-            return wholePileup.getPileupForSample(namePair.getKey(), getHeaderForReads());
-        } else {
-            return wholePileup;
+        if (aggregateAtReadGroupLevel) {
+            for (final String rg : allReadGroups) {
+                final ReadPileup rgPileup = pileup.makeFilteredPileup(pe -> pe.getRead().getReadGroup().equals(rg));
+                final ContaminationEstimate results = calcStats(rgPileup, myBase, popVC);
+                if (results != null) {
+                    contaminationResults.put(rg, results);
+                }
+            }
         }
+
+        if (aggregateAtSampleLevel) {
+            for (final String sample : allReadGroups) {
+                final ReadPileup samplePileup = pileup.getPileupForSample(sample, getHeaderForReads())
+                final ContaminationEstimate results = calcStats(samplePileup, myBase, popVC);
+                if (results != null) {
+                    contaminationResults.put(sample, results);
+                }
+            }
+        }
+
+        accumulatedResult.add(contaminationResults);
     }
 
     private Genotype getGenotype(final AlignmentContext context, final ReferenceContext referenceContext, final SAMFileHeader header) {
@@ -215,6 +222,8 @@ public final class ContEst extends LocusWalker {
         // get the ref and alt allele from an ExAC (subsetted) vcf VariantContext
         // for simplicity, we should subset to alleles that are uncommon (maf < some threshold like 10%) in all populations
         // that way we can simply take the overall human maf
+
+        //TODO: fill this in!!!
         return new PopulationFrequencyInfo(majorAllele, minorAllele, maf);
     }
 
@@ -226,7 +235,7 @@ public final class ContEst extends LocusWalker {
      * @param exacVC the population variant context from hapmap
      * @return a mapping of each target population to their estimated contamination
      */
-    private ContaminationStats calcStats(final ReadPileup pileup, final byte myAllele, final VariantContext exacVC) {
+    private ContaminationEstimate calcStats(final ReadPileup pileup, final byte myAllele, final VariantContext exacVC) {
             final PopulationFrequencyInfo info = parseExACInfo(exacVC);
             final double alleleFreq = info.getMinorAlleleFrequency();
 
@@ -235,8 +244,7 @@ public final class ContEst extends LocusWalker {
 
             // only use sites where this is the minor allele
             if (myAllele == info.minorAllele) {
-                final ContaminationEstimate est = new ContaminationEstimate(precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele());
-                return new ContaminationStats(minorCounts, majorCounts, counter, est);
+                return new ContaminationEstimate(minorCounts, majorCounts, counter, precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele());
             } else {
                 return null;
             }

@@ -1,7 +1,9 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
+import org.apache.commons.math3.util.MathArrays;
 import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.MathUtils;
+import org.broadinstitute.hellbender.utils.Nucleotide;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
 
@@ -9,7 +11,11 @@ import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
  * a class that estimates and stores the contamination values for a site.
  */
 final class ContaminationEstimate {
-    private final double[] log10Likelihoods;   // log10Likelihoods at discrete contamination levels
+    private double[] log10Likelihoods;   // log10Likelihoods at discrete contamination levels
+
+    private long basesFor = 0L;
+    private long basesAgainst = 0L;
+    private final Nucleotide.Counter alleleBreakdown;
 
     // precalculate the 128 possible values of epsilon
     private final static double[] linearSpaceErrorProbs = new IndexRange(0, Byte.MAX_VALUE + 1).mapToDouble(n -> Math.pow(10.0, -n/10.0));
@@ -18,11 +24,17 @@ final class ContaminationEstimate {
      * create the contamination estimate, given:
      * @param precision the precision value, to what level are we calculating the contamination
      */
-    public ContaminationEstimate(final double precision,
-                                 final double maf,  //TODO: I think maf == 0 is not an issue but double-check
+    public ContaminationEstimate(long basesFor, long basesAgainst, Nucleotide.Counter alleleBreakdown,
+                                 final double precision,
+                                 final double maf,
                                  final ReadPileup pileup,
                                  final byte uncontaminatedAllele,
                                  final byte hapmapAlt) {
+
+        this.basesFor = basesFor;
+        this.basesAgainst = basesAgainst;
+        this.alleleBreakdown = alleleBreakdown;
+
         Utils.validateArg(0.0 <= maf && maf <= 1.0, () -> "Invalid allele Freq: must be between 0 and 1 (inclusive), maf was " + maf);
 
         //TODO: this is log, not log10 -- everything is inconsistent!!!!!
@@ -49,6 +61,22 @@ final class ContaminationEstimate {
 
     public double[] getBins() {
         return log10Likelihoods;
+    }
+
+    public long getBasesMatching() {
+        return basesFor;
+    }
+
+    public long getBasesMismatching() {
+        return basesAgainst;
+    }
+
+    public void add(ContaminationEstimate other) {
+        if (other == null) return;
+        this.basesFor               += other.basesFor;
+        this.basesAgainst           += other.basesAgainst;
+        this.alleleBreakdown.increment(other.alleleBreakdown);
+        this.log10Likelihoods = MathArrays.ebeAdd(this.log10Likelihoods, other.log10Likelihoods);
     }
 
     //TODO: there has to be a library to replace this

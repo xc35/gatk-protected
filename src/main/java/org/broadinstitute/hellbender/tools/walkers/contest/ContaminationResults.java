@@ -39,7 +39,7 @@ public final class ContaminationResults {
     // a map of our contamination targets and their stats
     // key: aggregation entity ("BAM", sample name, or lane name)
     // value: ContaminationStats (whcih
-    private Map<String, ContaminationStats> stats = new HashMap<String,  ContaminationStats>();
+    private Map<String, ContaminationEstimate> stats = new HashMap<>();
 
     final Map<String, List<ContaminationData>> storedData = new HashMap<String, List<ContaminationData>>();
 
@@ -48,19 +48,18 @@ public final class ContaminationResults {
      *
      * @param newAggregationStats a mapping of the stat name to their statistics collected
      */
-    public void add(final Map<String, ContaminationStats> newAggregationStats) {
+    public void add(final Map<String, ContaminationEstimate> newAggregationStats) {
 
         // for each aggregation level
         for (final String aggregationKey : newAggregationStats.keySet()) {
-            final ContaminationStats newStats = newAggregationStats.get(aggregationKey);
+            final ContaminationEstimate newStats = newAggregationStats.get(aggregationKey);
 
             // a new way of doing this... store all the data until the end...
             if (!storedData.containsKey(aggregationKey)) {
                 storedData.put(aggregationKey, new ArrayList<>());
             }
 
-            final double[] newData = new double[newStats.getContamination().getBins().length];
-            System.arraycopy(newStats.getContamination().getBins(),0,newData,0,newStats.getContamination().getBins().length);
+            final double[] newData = Arrays.copyOf(newStats.getBins(), newStats.getBins().length);
             storedData.get(aggregationKey).add(new ContaminationData(newStats.getBasesMatching(), newStats.getBasesMismatching(), newData));
 
             // merge the sets
@@ -80,8 +79,8 @@ public final class ContaminationResults {
         //TODO: logger.info isn't correct -- use a TableUtils method
         logger.info("name\tpopulation\tpopulation_fit\tcontamination\tconfidence_interval_95_width\tconfidence_interval_95_low\tconfidence_interval_95_high\tsites");
 
-        for (final Map.Entry<String, ContaminationStats> entry : stats.entrySet()) {
-            final ContaminationStats stats = entry.getValue();
+        for (final Map.Entry<String, ContaminationEstimate> entry : stats.entrySet()) {
+            final ContaminationEstimate stats = entry.getValue();
             final String aggregationLevel = entry.getKey();
 
             final List<ContaminationData> newStats = storedData.get(aggregationLevel);
