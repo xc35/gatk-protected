@@ -60,11 +60,7 @@ final class ContaminationEstimate {
         }
     }
 
-    public double[] getBins() {
-        return log10Likelihoods;
-    }
-
-    public void add(ContaminationEstimate other) {
+    public void addSiteData(ContaminationEstimate other) {
         if (other == null) return;
         this.basesFor               += other.basesFor;
         this.basesAgainst           += other.basesAgainst;

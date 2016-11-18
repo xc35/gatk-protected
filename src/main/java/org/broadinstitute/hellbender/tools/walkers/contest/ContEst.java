@@ -11,6 +11,7 @@ import org.broadinstitute.hellbender.cmdline.programgroups.QCProgramGroup;
 import org.broadinstitute.hellbender.engine.*;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
+import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.MathUtils;
 import org.broadinstitute.hellbender.utils.Nucleotide;
 import org.broadinstitute.hellbender.utils.genotyper.IndexedSampleList;
@@ -89,7 +90,10 @@ public final class ContEst extends LocusWalker {
 
     int countGenotypeHomVar = 0;
 
-    ContaminationResults accumulatedResult = new ContaminationResults();
+    // a map of our contamination targets and their cumulativeEstimates
+    // key: aggregation entity ("BAM", sample name, or read group ID)
+    // value: cumulative ContaminationEstimate
+    private Map<String, ContaminationEstimate> cumulativeEstimateByAggregationKey = new HashMap<>();
 
     @Override
     public void onTraversalStart() {
@@ -134,25 +138,22 @@ public final class ContEst extends LocusWalker {
         // only use non-reference sites
         final byte myBase = genotype.getAllele(0).getBases()[0];
 
-        final Map<String, ContaminationEstimate> contaminationResults = new LinkedHashMap<>();
+
         final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads())
                 .makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
 
 
+        final Map<String, ContaminationEstimate> resultsForThisSite = new LinkedHashMap<>();
         if (aggregateAtBamLevel) {
             final ContaminationEstimate results = calcStats(pileup, myBase, popVC);
-            if (results != null) {
-                contaminationResults.put("BAM", results);
-            }
+            addSiteEstimate("BAM", results);
         }
 
         if (aggregateAtReadGroupLevel) {
             for (final String rg : allReadGroups) {
                 final ReadPileup rgPileup = pileup.makeFilteredPileup(pe -> pe.getRead().getReadGroup().equals(rg));
                 final ContaminationEstimate results = calcStats(rgPileup, myBase, popVC);
-                if (results != null) {
-                    contaminationResults.put(rg, results);
-                }
+                addSiteEstimate(rg, results);
             }
         }
 
@@ -160,16 +161,37 @@ public final class ContEst extends LocusWalker {
             for (final String sample : allReadGroups) {
                 final ReadPileup samplePileup = pileup.getPileupForSample(sample, getHeaderForReads())
                 final ContaminationEstimate results = calcStats(samplePileup, myBase, popVC);
-                if (results != null) {
-                    contaminationResults.put(sample, results);
-                }
+                addSiteEstimate(sample, results);
             }
         }
 
-        accumulatedResult.add(contaminationResults);
+        for (final String aggregationKey : resultsForThisSite.keySet()) {
+            final ContaminationEstimate newStats = resultsForThisSite.get(aggregationKey);
+
+            // merge the sets
+            if (cumulativeEstimateByAggregationKey.containsKey(aggregationKey)) {
+                cumulativeEstimateByAggregationKey.get(aggregationKey).addSiteData(newStats);
+            } else {
+                cumulativeEstimateByAggregationKey.put(aggregationKey, newStats);
+            }
+        }
+
+    }
+
+    // siteEstimate can be null, in which case nothing happens
+    private void addSiteEstimate(final String aggregationKey, final ContaminationEstimate siteEstimate) {
+        if (siteEstimate == null) {
+            return;
+        }
+        if (cumulativeEstimateByAggregationKey.containsKey(aggregationKey)) {
+            cumulativeEstimateByAggregationKey.get(aggregationKey).addSiteData(siteEstimate);
+        } else {
+            cumulativeEstimateByAggregationKey.put(aggregationKey, siteEstimate);
+        }
     }
 
     private Genotype getGenotype(final AlignmentContext context, final ReferenceContext referenceContext, final SAMFileHeader header) {
+        //TODO: or the whole pileup if evalSample is not given?
         final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, header);
         if (pileup == null || pileup.isEmpty()) {
             return null;
@@ -246,8 +268,51 @@ public final class ContEst extends LocusWalker {
 
     @Override
     public Object onTraversalSuccess() {
-        accumulatedResult.outputReport(precision);
+        outputReport();
         logger.info("Homozygous variant sites: " + countGenotypeHomVar);
         return "SUCCESS";
+    }
+
+    public void outputReport() {
+
+        //TODO: logger.info isn't correct -- use a TableUtils method
+        logger.info("name\tpopulation\tpopulation_fit\tcontamination\tconfidence_interval_95_width\tconfidence_interval_95_low\tconfidence_interval_95_high\tsites");
+
+        //TODO: very confused why cumulativeEstimates = entry.getValue isn't used
+        // TODO: and why have both storedData and cumulativeEstimates???
+        for (final Map.Entry<String, ContaminationEstimate> entry : cumulativeEstimateByAggregationKey.entrySet()) {
+            final ContaminationEstimate data = entry.getValue();
+            final String aggregationKey = entry.getKey();
+
+            final String pm = "%3." + Math.round(Math.log10(1/precision)) +"f";
+
+            final int bins = data.getBins().length;
+
+            //TODO: sort before output?
+
+            final double[][] matrix = new double[bins][data.size()];
+
+            for (int i = 0; i<bins; i++) {
+                for (int j=0; j<data.size(); j++) {
+                    matrix[i][j] = data.get(j).getBins()[i];
+                }
+            }
+
+            // now perform the sum
+            final double[] output = new IndexRange(0, bins).mapToDouble(n -> MathUtils.sum(matrix[n]));
+
+            // get the confidence interval, at the set width
+            final ContaminationEstimate.ConfidenceInterval newInterval = new ContaminationEstimate.ConfidenceInterval(output);
+
+            //TODO: ditto about a Table method
+            logger.info(String.format("%s\t%s\t"+pm+"\t"+pm+"\t"+pm+"\t"+pm+"\t"+"%d",
+                    aggregationKey,
+                    "n/a",
+                    newInterval.getContamination(),
+                    (newInterval.getStop() - newInterval.getStart()),
+                    newInterval.getStart(),
+                    newInterval.getStop(),
+                    data.size()));
+        }
     }
 }
