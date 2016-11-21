@@ -1,8 +1,9 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
 import htsjdk.samtools.SAMFileHeader;
-import htsjdk.samtools.SAMReadGroupRecord;
 import htsjdk.variant.variantcontext.*;
+import org.apache.commons.lang3.mutable.MutableInt;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.hellbender.cmdline.Argument;
@@ -10,17 +11,15 @@ import org.broadinstitute.hellbender.cmdline.CommandLineProgramProperties;
 import org.broadinstitute.hellbender.cmdline.programgroups.QCProgramGroup;
 import org.broadinstitute.hellbender.engine.*;
 import org.broadinstitute.hellbender.exceptions.UserException;
+import org.broadinstitute.hellbender.utils.BaseUtils;
 import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
-import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.MathUtils;
-import org.broadinstitute.hellbender.utils.Nucleotide;
 import org.broadinstitute.hellbender.utils.genotyper.IndexedSampleList;
 import org.broadinstitute.hellbender.utils.genotyper.SampleList;
 import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Estimate cross-sample contamination
@@ -80,20 +79,15 @@ public final class ContEst extends LocusWalker {
     @Argument(shortName = "pc", fullName = "precision", doc = "the degree of precision to which the contamination tool should estimate (e.g. the bin size)", optional = true)
     private double precision = 0.01;
 
-    private static final Allele[] ALLELES = {Allele.create((byte) 'A'), Allele.create((byte) 'C'), Allele.create((byte) 'G'), Allele.create((byte) 'T')};
+    //pairs of AggregationLevel with their key eg "BAM" or the sample name or the read group ID
+    final List<ImmutablePair<AggregationLevel, String>> aggregationKeys = new ArrayList<>();
 
-    Collection<String> allSamples;
-    Collection<String> allReadGroups;
-    boolean aggregateAtBamLevel;
-    boolean aggregateAtSampleLevel;
-    boolean aggregateAtReadGroupLevel;
-
-    int countGenotypeHomVar = 0;
+    final MutableInt homVarCount = new MutableInt(0);
 
     // a map of our contamination targets and their cumulativeEstimates
     // key: aggregation entity ("BAM", sample name, or read group ID)
     // value: cumulative ContaminationEstimate
-    private Map<String, ContaminationEstimate> cumulativeEstimateByAggregationKey = new HashMap<>();
+    private final Map<String, ContaminationEstimate> cumulativeEstimateByAggregationKey = new HashMap<>();
 
     @Override
     public void onTraversalStart() {
@@ -102,12 +96,17 @@ public final class ContEst extends LocusWalker {
             throw new UserException.BadInput("BAM header sample names " + samplesList.asListOfSamples() + "does not contain given tumor" + " sample name " + evalSample);
         }
 
-        aggregateAtBamLevel = aggregations == null || aggregations.contains(AggregationLevel.BAM);
-        aggregateAtSampleLevel = aggregations.contains(AggregationLevel.SAMPLE);
-        aggregateAtReadGroupLevel = aggregations.contains(AggregationLevel.READGROUP);
-
-        allReadGroups = getHeaderForReads().getReadGroups().stream().map(SAMReadGroupRecord::getId).collect(Collectors.toList());
-        allSamples = getHeaderForReads().getReadGroups().stream().map(SAMReadGroupRecord::getSample).distinct().collect(Collectors.toList());
+        if (aggregations == null || aggregations.contains(AggregationLevel.BAM)) {
+            aggregationKeys.add(new ImmutablePair<>(AggregationLevel.BAM, "BAM"));
+        }
+        if (aggregations.contains(AggregationLevel.SAMPLE)) {
+            getHeaderForReads().getReadGroups().stream().map(rg -> new ImmutablePair<>(AggregationLevel.SAMPLE, rg.getSample())).distinct()
+                    .forEach(aggregationKeys::add);
+        }
+        if (aggregations.contains(AggregationLevel.READGROUP)) {
+            getHeaderForReads().getReadGroups().stream().map(rg -> new ImmutablePair<>(AggregationLevel.READGROUP, rg.getId()))
+                    .forEach(aggregationKeys::add);
+        }
     }
 
     /**
@@ -132,50 +131,34 @@ public final class ContEst extends LocusWalker {
         if (genotype == null || !genotype.isHomVar()) {
             return;
         } else {
-            countGenotypeHomVar++;
+            homVarCount.increment();
         }
 
         // only use non-reference sites
         final byte myBase = genotype.getAllele(0).getBases()[0];
 
-
         final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads())
                 .makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
 
-
-        final Map<String, ContaminationEstimate> resultsForThisSite = new LinkedHashMap<>();
-        if (aggregateAtBamLevel) {
-            final ContaminationEstimate results = calcStats(pileup, myBase, popVC);
-            addSiteEstimate("BAM", results);
+        for (final ImmutablePair<AggregationLevel, String> aggregationKey : aggregationKeys) {
+            final AggregationLevel level = aggregationKey.getLeft();
+            final String key = aggregationKey.getRight();
+            final ReadPileup pileupForAggregation = getPileupForAggregation(pileup, level, key);
+            final ContaminationEstimate results = calcStats(pileupForAggregation, myBase, popVC);
+            addSiteEstimate(key, results);
         }
+    }
 
-        if (aggregateAtReadGroupLevel) {
-            for (final String rg : allReadGroups) {
-                final ReadPileup rgPileup = pileup.makeFilteredPileup(pe -> pe.getRead().getReadGroup().equals(rg));
-                final ContaminationEstimate results = calcStats(rgPileup, myBase, popVC);
-                addSiteEstimate(rg, results);
-            }
+    final ReadPileup getPileupForAggregation(final ReadPileup pileup, final AggregationLevel level, final String key) {
+        if (level == AggregationLevel.BAM) {
+            return pileup;  // the key is an arbitrary placeholder
+        } else if (level == AggregationLevel.SAMPLE) {
+            return pileup.getPileupForSample(key, getHeaderForReads()); // the key is a sample name
+        } else if (level == AggregationLevel.READGROUP) {
+            return pileup.makeFilteredPileup(pe -> pe.getRead().getReadGroup().equals(key));    // the key is a read group ID
+        } else {
+            throw new IllegalStateException("Programmer error: unrecognized aggregation level.");
         }
-
-        if (aggregateAtSampleLevel) {
-            for (final String sample : allReadGroups) {
-                final ReadPileup samplePileup = pileup.getPileupForSample(sample, getHeaderForReads())
-                final ContaminationEstimate results = calcStats(samplePileup, myBase, popVC);
-                addSiteEstimate(sample, results);
-            }
-        }
-
-        for (final String aggregationKey : resultsForThisSite.keySet()) {
-            final ContaminationEstimate newStats = resultsForThisSite.get(aggregationKey);
-
-            // merge the sets
-            if (cumulativeEstimateByAggregationKey.containsKey(aggregationKey)) {
-                cumulativeEstimateByAggregationKey.get(aggregationKey).addSiteData(newStats);
-            } else {
-                cumulativeEstimateByAggregationKey.put(aggregationKey, newStats);
-            }
-        }
-
     }
 
     // siteEstimate can be null, in which case nothing happens
@@ -202,12 +185,11 @@ public final class ContEst extends LocusWalker {
         final double MIN_GENOTYPE_RATIO = 0.8;
         final int[] bases = pileup.getBaseCounts();
         final int maxAlleleIndex = GATKProtectedMathUtils.maxIndex(bases);
+        final byte majorBase = BaseUtils.baseIndexToSimpleBase(maxAlleleIndex);
         final int numReads = (int) MathUtils.sum(bases);
-        final String refBase = String.valueOf((char)referenceContext.getBase());
-        if (bases[maxAlleleIndex] / (double) numReads >= MIN_GENOTYPE_RATIO && !refBase.equals(ALLELES[maxAlleleIndex].getBaseString())) {
-            return new GenotypeBuilder(evalSample, Collections.singletonList(ALLELES[maxAlleleIndex])).make();
-        }
-        return null;
+        final byte refBase = referenceContext.getBase();
+        final boolean isHomAlt = majorBase != refBase && bases[maxAlleleIndex] / (double) numReads >= MIN_GENOTYPE_RATIO;
+        return isHomAlt ? new GenotypeBuilder(evalSample, Collections.singletonList(Allele.create(majorBase))).make() : null;
     }
 
     private static final class PopulationFrequencyInfo {
@@ -255,12 +237,11 @@ public final class ContEst extends LocusWalker {
             final PopulationFrequencyInfo info = parseExACInfo(exacVC);
             final double alleleFreq = info.getMinorAlleleFrequency();
 
-            final long majorCounts = counter.get(Nucleotide.valueOf(info.getMajorAllele()));
-            final long minorCounts = counter.get(Nucleotide.valueOf(info.getMinorAllele()));
+            pileup.
 
             // only use sites where this is the minor allele
             if (myAllele == info.minorAllele) {
-                return new ContaminationEstimate(minorCounts, majorCounts, counter, precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele());
+                return new ContaminationEstimate(precision, alleleFreq, pileup, info.getMinorAllele(), info.getMajorAllele());
             } else {
                 return null;
             }
@@ -268,51 +249,15 @@ public final class ContEst extends LocusWalker {
 
     @Override
     public Object onTraversalSuccess() {
-        outputReport();
-        logger.info("Homozygous variant sites: " + countGenotypeHomVar);
-        return "SUCCESS";
-    }
+        for (final ImmutablePair<AggregationLevel, String> aggregationKey : aggregationKeys) {
+            final AggregationLevel level = aggregationKey.getLeft();
+            final String key = aggregationKey.getRight();
+            final ContaminationEstimate estimate = cumulativeEstimateByAggregationKey.get(key);
+            //TODO: get confidence interval
 
-    public void outputReport() {
-
-        //TODO: logger.info isn't correct -- use a TableUtils method
-        logger.info("name\tpopulation\tpopulation_fit\tcontamination\tconfidence_interval_95_width\tconfidence_interval_95_low\tconfidence_interval_95_high\tsites");
-
-        //TODO: very confused why cumulativeEstimates = entry.getValue isn't used
-        // TODO: and why have both storedData and cumulativeEstimates???
-        for (final Map.Entry<String, ContaminationEstimate> entry : cumulativeEstimateByAggregationKey.entrySet()) {
-            final ContaminationEstimate data = entry.getValue();
-            final String aggregationKey = entry.getKey();
-
-            final String pm = "%3." + Math.round(Math.log10(1/precision)) +"f";
-
-            final int bins = data.getBins().length;
-
-            //TODO: sort before output?
-
-            final double[][] matrix = new double[bins][data.size()];
-
-            for (int i = 0; i<bins; i++) {
-                for (int j=0; j<data.size(); j++) {
-                    matrix[i][j] = data.get(j).getBins()[i];
-                }
-            }
-
-            // now perform the sum
-            final double[] output = new IndexRange(0, bins).mapToDouble(n -> MathUtils.sum(matrix[n]));
-
-            // get the confidence interval, at the set width
-            final ContaminationEstimate.ConfidenceInterval newInterval = new ContaminationEstimate.ConfidenceInterval(output);
-
-            //TODO: ditto about a Table method
-            logger.info(String.format("%s\t%s\t"+pm+"\t"+pm+"\t"+pm+"\t"+pm+"\t"+"%d",
-                    aggregationKey,
-                    "n/a",
-                    newInterval.getContamination(),
-                    (newInterval.getStop() - newInterval.getStart()),
-                    newInterval.getStart(),
-                    newInterval.getStop(),
-                    data.size()));
+            //TODO: table output
         }
+        logger.info("Homozygous variant sites: " + homVarCount);
+        return "SUCCESS";
     }
 }
