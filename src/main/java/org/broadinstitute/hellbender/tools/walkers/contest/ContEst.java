@@ -1,9 +1,9 @@
 package org.broadinstitute.hellbender.tools.walkers.contest;
 
-import htsjdk.samtools.SAMFileHeader;
 import htsjdk.variant.variantcontext.*;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.math3.util.MathArrays;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.hellbender.cmdline.Argument;
@@ -11,15 +11,17 @@ import org.broadinstitute.hellbender.cmdline.CommandLineProgramProperties;
 import org.broadinstitute.hellbender.cmdline.programgroups.QCProgramGroup;
 import org.broadinstitute.hellbender.engine.*;
 import org.broadinstitute.hellbender.exceptions.UserException;
-import org.broadinstitute.hellbender.utils.BaseUtils;
-import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
-import org.broadinstitute.hellbender.utils.MathUtils;
+import org.broadinstitute.hellbender.utils.*;
 import org.broadinstitute.hellbender.utils.genotyper.IndexedSampleList;
 import org.broadinstitute.hellbender.utils.genotyper.SampleList;
 import org.broadinstitute.hellbender.utils.pileup.ReadPileup;
+import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
 
 import java.util.*;
+import java.util.function.DoubleUnaryOperator;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /**
  * Estimate cross-sample contamination
@@ -55,7 +57,7 @@ import java.util.*;
                 " * This tool determine the percent contamination of an input bam by sample, by lane, or in aggregate across all the input reads.",
         oneLineSummary = "Estimate cross-sample contamination",
         programGroup = QCProgramGroup.class)
-public final class ContEst extends LocusWalker {
+public final class ContEst extends VariantWalker {
     protected static final Logger logger = LogManager.getLogger(ContEst.class);
 
     public enum AggregationLevel { SAMPLE, READGROUP, BAM }
@@ -87,10 +89,14 @@ public final class ContEst extends LocusWalker {
     // a map of our contamination targets and their cumulativeEstimates
     // key: aggregation entity ("BAM", sample name, or read group ID)
     // value: cumulative ContaminationEstimate
-    private final Map<String, ContaminationEstimate> cumulativeEstimateByAggregationKey = new HashMap<>();
+    private final Map<String, double[]> cumulativeLogLikelihoods = new HashMap<>();
+
+    // the likelihood as a function of contamination is not analytic so we simply track it over a discrete array of values
+    private double[] discreteContaminations;
 
     @Override
     public void onTraversalStart() {
+        discreteContaminations = GATKProtectedMathUtils.createEvenlySpacedPoints(0, 1, (int) Math.round(1.0 / precision) + 1);
         final SampleList samplesList = new IndexedSampleList(new ArrayList<>(ReadUtils.getSamplesFromHeader(getHeaderForReads())));
         if (!samplesList.asListOfSamples().contains(evalSample)) {
             throw new UserException.BadInput("BAM header sample names " + samplesList.asListOfSamples() + "does not contain given tumor" + " sample name " + evalSample);
@@ -107,25 +113,30 @@ public final class ContEst extends LocusWalker {
             getHeaderForReads().getReadGroups().stream().map(rg -> new ImmutablePair<>(AggregationLevel.READGROUP, rg.getId()))
                     .forEach(aggregationKeys::add);
         }
+
+        aggregationKeys.stream().map(ImmutablePair::getRight).forEach(
+                key -> cumulativeLogLikelihoods.put(key, new double[discreteContaminations.length]));
     }
 
     /**
      * our map function, which emits a contamination stats for each of the subgroups (lanes, samples, etc) that we encounter
      *
-     * @param ref     the reference information at this position
-     * @param context the read context, where we get the alignment data
-     * @param features the reference meta data tracker, from which we get the array truth data
      * @return a mapping of our subgroup name to contamination estimate
      */
     @Override
-    public void apply(final AlignmentContext context, final ReferenceContext ref, final FeatureContext features) {
-        final List<VariantContext> vcs = features.getValues(exac);
-        if (vcs.isEmpty()) {
-            return;
-        }
+    public void apply(final VariantContext exacSite, final ReadsContext readsContext, final ReferenceContext referenceContext, final FeatureContext featureContext) {
+        final int position = exacSite.getStart();
+        final List<GATKRead> reads = StreamSupport.stream(readsContext.spliterator(), false).collect(Collectors.toList());
 
-        final VariantContext popVC = vcs.get(0);
-        final Genotype genotype = getGenotype(context, ref, getHeaderForReads());
+        //TODO: verify that vc.getStart() - read.getAssignedStart() is the correct offset for creating a Pileup
+        final List<Integer> offsets = reads.stream().map(read -> position - read.getAssignedStart()).collect(Collectors.toList());
+        final ReadPileup pileup = new ReadPileup(exacSite, reads, offsets)
+                .makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
+
+        //TODO: what about pileup for just the eval sample?
+
+
+        final Genotype genotype = getGenotype(pileup, referenceContext);
 
         // only use homozygous sites
         if (genotype == null || !genotype.isHomVar()) {
@@ -137,15 +148,14 @@ public final class ContEst extends LocusWalker {
         // only use non-reference sites
         final byte myBase = genotype.getAllele(0).getBases()[0];
 
-        final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, getHeaderForReads())
-                .makeFilteredPileup(pe -> pe.getQual() >= MIN_QSCORE && pe.getMappingQual() >= MIN_MAPQ);
+
 
         for (final ImmutablePair<AggregationLevel, String> aggregationKey : aggregationKeys) {
             final AggregationLevel level = aggregationKey.getLeft();
             final String key = aggregationKey.getRight();
             final ReadPileup pileupForAggregation = getPileupForAggregation(pileup, level, key);
-            final ContaminationEstimate results = calcStats(pileupForAggregation, myBase, popVC);
-            addSiteEstimate(key, results);
+            final double[] siteLogLikelihoods = calcStats(pileupForAggregation, myBase, exacSite);
+            addSiteEstimate(key, siteLogLikelihoods);
         }
     }
 
@@ -161,25 +171,15 @@ public final class ContEst extends LocusWalker {
         }
     }
 
-    // siteEstimate can be null, in which case nothing happens
-    private void addSiteEstimate(final String aggregationKey, final ContaminationEstimate siteEstimate) {
-        if (siteEstimate == null) {
-            return;
-        }
-        if (cumulativeEstimateByAggregationKey.containsKey(aggregationKey)) {
-            cumulativeEstimateByAggregationKey.get(aggregationKey).addSiteData(siteEstimate);
-        } else {
-            cumulativeEstimateByAggregationKey.put(aggregationKey, siteEstimate);
+    // siteLogLikelihoods can be null, in which case nothing happens
+    private void addSiteEstimate(final String aggregationKey, final double[] siteLogLikelihoods) {
+        if (siteLogLikelihoods != null) {
+            double[] currentLikelihoods = cumulativeLogLikelihoods.get(aggregationKey);
+            cumulativeLogLikelihoods.put(aggregationKey, MathArrays.ebeAdd(currentLikelihoods, siteLogLikelihoods));
         }
     }
 
-    private Genotype getGenotype(final AlignmentContext context, final ReferenceContext referenceContext, final SAMFileHeader header) {
-        //TODO: or the whole pileup if evalSample is not given?
-        final ReadPileup pileup = context.getBasePileup().getPileupForSample(evalSample, header);
-        if (pileup == null || pileup.isEmpty()) {
-            return null;
-        }
-
+    private Genotype getGenotype(final ReadPileup pileup, final ReferenceContext referenceContext) {
         //TODO: this is a really dumb way of calling genotypes.  Replace with a posterior probability.  Then it won't be
         //TODO: necessary to use a minimum depth, which I have already gotten rid of in anticipation
         final double MIN_GENOTYPE_RATIO = 0.8;
@@ -216,7 +216,7 @@ public final class ContEst extends LocusWalker {
         }
     }
 
-    private static PopulationFrequencyInfo parseExACInfo(final VariantContext variantContext) {
+    private static PopulationFrequencyInfo parseExACInfo(final VariantContext exacSite) {
         // get the ref and alt allele from an ExAC (subsetted) vcf VariantContext
         // for simplicity, we should subset to alleles that are uncommon (maf < some threshold like 10%) in all populations
         // that way we can simply take the overall human maf
@@ -233,11 +233,9 @@ public final class ContEst extends LocusWalker {
      * @param exacVC the population variant context from hapmap
      * @return a mapping of each target population to their estimated contamination
      */
-    private ContaminationEstimate calcStats(final ReadPileup pileup, final byte myAllele, final VariantContext exacVC) {
+    private double[] calcStats(final ReadPileup pileup, final byte myAllele, final VariantContext exacVC) {
             final PopulationFrequencyInfo info = parseExACInfo(exacVC);
             final double alleleFreq = info.getMinorAlleleFrequency();
-
-            pileup.
 
             // only use sites where this is the minor allele
             if (myAllele == info.minorAllele) {
@@ -252,12 +250,63 @@ public final class ContEst extends LocusWalker {
         for (final ImmutablePair<AggregationLevel, String> aggregationKey : aggregationKeys) {
             final AggregationLevel level = aggregationKey.getLeft();
             final String key = aggregationKey.getRight();
-            final ContaminationEstimate estimate = cumulativeEstimateByAggregationKey.get(key);
+            final double[] logLikelihood = cumulativeLogLikelihoods.get(key);
             //TODO: get confidence interval
 
             //TODO: table output
         }
         logger.info("Homozygous variant sites: " + homVarCount);
         return "SUCCESS";
+    }
+
+    //TODO: move the following to an Engine class
+
+    // log likelihood of base pileup given that our sample is homozygous for an uncontaminated allele and
+    // is contaminated with a different base with a given population frequency
+    // we assume that the uncontaminated allele's and contaminating allele's frequencies add up to 1 i.e. thhis site
+    // is very nearly biallelic
+    public static double contaminationLogLikelihood(final double contamination,
+                                                    final double contaminantAlleleFrequency,
+                                                    final byte[] bases,
+                                                    final byte[] quals,
+                                                    final byte sampleBase,
+                                                    final byte contaminatingBase) {
+        Utils.validateArg(0.0 <= contaminantAlleleFrequency && contaminantAlleleFrequency <= 1.0, () -> "Invalid allele Freq: must be between 0 and 1 (inclusive), maf was " + contaminantAlleleFrequency);
+        Utils.validateArg(bases.length == quals.length, "Must have same number of bases and quals");
+
+        // probability that the contaminating sample is homozygous for the contaminating allele, heterozygous
+        // or heterozygous for the sample allele
+        final double logPHomContaminating = Math.log(MathUtils.square(contaminantAlleleFrequency));
+        final double logPHetContaminating = Math.log(2 * contaminantAlleleFrequency * (1 - contaminantAlleleFrequency));
+        final double logPHomUncontaminating = Math.log(MathUtils.square(1 - contaminantAlleleFrequency));
+
+        final DoubleUnaryOperator pileupLogLikelihood = genotypeFractionOfContaminatingAllele ->
+                logLikelihood(contamination, bases, quals, sampleBase, contaminatingBase, genotypeFractionOfContaminatingAllele);
+
+        return GATKProtectedMathUtils.logSumExp(logPHomContaminating + pileupLogLikelihood.applyAsDouble(1.0),
+                logPHetContaminating + pileupLogLikelihood.applyAsDouble(0.5),
+                logPHomUncontaminating + pileupLogLikelihood.applyAsDouble(0.0));
+    }
+
+    // the log likelihood of a pileup given the fraction -- 0, 1/2, or 1 -- of the contaminating allele in the
+    // contaminant genotype
+    private static double logLikelihood(double contamination, byte[] bases, byte[] quals, byte sampleBase, byte contaminatingBase, double genotypeFractionOfWrongAllele) {
+        return new IndexRange(0, bases.length).sum(n -> logLikelihood(sampleBase, contaminatingBase,
+                contamination * genotypeFractionOfWrongAllele, QualityUtils.qualToErrorProb(quals[n]), bases[n]));
+    }
+
+    // If sample is homozygous for sampleBase and a fraction contaminatingFraction of the library DNA at this locus
+    // has contaminatingBase, return the log likelihood to sequence sequencedBase given an error probability
+    private static double logLikelihood(byte sampleBase, byte contaminatingBase, double contaminatingFraction, double pError, byte sequencedBase) {
+        if (sequencedBase == sampleBase) {
+            // sample DNA without error + contaminant DNA with error
+            return Math.log(( 1 - contaminatingFraction) * (1 - pError) + contaminatingFraction * pError/3);
+        } else if (sequencedBase == contaminatingBase) {
+            // sample DNA with error + contaminant DNA without error
+            return Math.log((1 - contaminatingFraction) * pError/3 + contaminatingFraction * (1 - pError));
+        } else {
+            // another allele
+            return 0.0;
+        }
     }
 }
