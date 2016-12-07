@@ -25,6 +25,7 @@ import org.broadinstitute.hellbender.utils.haplotype.Haplotype;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
+import org.apache.commons.math3.util.CombinatoricsUtils;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -249,6 +250,61 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         callVcb.attribute(GATKVCFConstants.TUMOR_SB_POWER_FWD_KEY, tumorSBpower_fwd);
         callVcb.attribute(GATKVCFConstants.TUMOR_SB_POWER_REV_KEY, tumorSBpower_rev);
     }
+
+
+
+
+    private void addNewStrandArtifactFilter(final ReadLikelihoods<Allele> likelihoods, final VariantContext mergedVC){
+        final Collection<ReadLikelihoods.BestAllele> tumorBestAlleles = likelihoods.bestAlleles(tumorSampleName);
+        final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesForward = tumorBestAlleles.stream().filter(ba -> ! ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
+        final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesReverse = tumorBestAlleles.stream().filter(ba -> ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
+        final int numAltReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(mergedVC.getAlternateAllele(0))).count(); // TODO: getAlternateAllele fails for triallelic
+        final int numRefReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
+        final int numAltReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getAlternateAllele(0))).count(); // TODO: getAlternateAllele fails for triallelic
+        final int numRefReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
+
+        final int ARTIFACT_FWD = 0, ARTIFACT_REV = 1, NO_ARTIFACTS = 2;
+
+        // prior probabilities for z
+        final double[] pi = new double[]{0.01, 0.01, 0.98};
+
+        // prior pseudocounts for the beta (f and epsilon)
+        final int alpha = numAltReadsForward + numAltReadsReverse;
+        final int beta = tumorBestAlleles.size();
+        final int eta = 0;
+        final int tau = 0;
+
+        // compute the posterior probabilities
+        final double[] posterior_probabilities = new double[3];
+        posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD];
+        posterior_probabilities[ARTIFACT_REV] = pi[ARTIFACT_REV];
+        posterior_probabilities[NO_ARTIFACTS] = pi[NO_ARTIFACTS];
+
+    }
+
+    // https://www.cs.cmu.edu/~10701/lecture/technote2_betabinomial.pdf
+
+    /***
+     *
+     * Computes the predictive posterior probability of the beta-binomial model.
+     * You can set n = 0 and k = 0 if you would like to use the beta-binomial directly
+     *
+     * @param j number of heads in a yet-to-be-seen coin flip experiment
+     * @param m number of yet-to-be-seen coin flips
+     * @param n number of observed coin flips
+     * @param k number of heads observed
+     * @param alpha pseudocount for the number of heads
+     * @param beta pseudocount for the number of tails
+     * @return
+     */
+    private double betaBinomialProbability(final int j, final int m, final int n, final int k, final int alpha, final int beta){
+        Utils.validateArg(0 <= j && j <= m, "j must be within [0,m]");
+        // should I do this in log space?
+
+        final double probability = CombinatoricsUtils.factorial(m)/(CombinatoricsUtils.factorial(j)*C
+    }
+
+
 
     /** Calculate the likelihoods of hom ref and each het genotype of the form ref/alt
 
