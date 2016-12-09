@@ -14,7 +14,7 @@
 \usepackage[colorinlistoftodos]{todonotes}
 \usepackage[colorlinks=true, allcolors=blue]{hyperref}
 
-\title{Mutet2 Strand Artifact Filter}
+\title{Mutect2 Strand Artifact Filter}
 \author{Takuto Sato}
 
 \begin{document}
@@ -42,20 +42,20 @@ biallelic
 \end{figure}
 
 \begin{itemize}
-	\item $z \sim \text{Multinomial}(\pi)$, where $z  \in \{ \text{Artifact+}, \text{Artifact-}, \text{NoArtifacts} \}$, represents the presence of the strand artifact in either forward or reverse reads. For instance, $Artifact+$ means that the artifactual evidence for the alternate allele was detected in the forward (+) reads but not in the reverse (-) reads. (REWORD)
-	\item $f \sim \text{Beta}(\alpha, \beta)$ represents the true allele fraction at the site.
-	\item $\epsilon \sim \text{Beta}(\eta, \tau)$ represents the allele fraction of a strand artifact.
+	\item $z \sim \text{Multinomial}(\pi)$, where $z  \in \{ \text{artifact on forward strand}, \text{artifact on reverse strand}, \text{no artifact} \}$, represents the presence of the strand artifact in either the forward or reverse reads. For instance, artifact on forward strand means that the artifactual evidence for the alternate allele was detected in the forward (+) reads but not in the reverse (-) reads. (REWORD)
+	\item $f \sim \text{Unif}(0, 1)$ represents the true allele fraction at the site.
+	\item $\epsilon \sim \text{Beta}(\alpha, \beta)$ represents the allele fraction of a strand artifact.
 	\item $x^+ | f, \epsilon, z \sim$ A mixture of binomials, defined as:
 		\begin{itemize}
-			\item $x^+ | f, \epsilon, z = \text{Artifact+} \sim \text{Binomial} (n^+, \epsilon)$
+			\item $x^+ | f, \epsilon, z = \text{Artifact+} \sim \text{Binomial} (n^+, f + \epsilon(1-f))$
 			\item $x^+ | f, \epsilon, z = \text{Artifact-} \sim \text{Binomial} (n^+, f)$
-			\item $x^+ | f, \epsilon, z = \text{NoArtifacts} \sim \text{Binomial} (n^+, f)$
+			\item $x^+ | f, \epsilon, z = \text{NoArtifact} \sim \text{Binomial} (n^+, f)$
 		\end{itemize}			
 \end{itemize}
 
 Having observed the read counts in the + and - directions, we can compute the posterior probabilities of the latent variable $z$, as described in detail below.
 
-\subsection{Posterior Probability of Strand Artifact}
+\subsection{Posterior Probabilities}
 
 Latent variable $z$ takes on 3 values, so we simply enumerate the posterior probability for each case.
 
@@ -63,8 +63,8 @@ Latent variable $z$ takes on 3 values, so we simply enumerate the posterior prob
 \begin{split}
 P(z=Artifact+ |x^+, x^-) & \propto p(z) p(x^+, x^- | z=Artifact+) \\
                      & = \iint_{f, \epsilon} p(z) p(f) p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \,df\,d\epsilon \\
-                     & = p(z) \int_f p(f) p(x^- | z, f, \epsilon) \, df \int_\epsilon p(\epsilon) p(x^+ | z, f, \epsilon) \, d\epsilon \\
-                     & = p(z) BetaBinomial(x^-| \alpha, \beta) BetaBinomial(x^+| \eta, \tau) 
+                     & = p(z) \iint_{f, \epsilon} p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \, d\epsilon  \, df \\
+                     & = p(z) \iint_{f, \epsilon} Binomial(x^+ | f + \epsilon(1-f), n^+) Binomial(x^- | f, n^-)    
 \end{split}
 \end{equation}
 

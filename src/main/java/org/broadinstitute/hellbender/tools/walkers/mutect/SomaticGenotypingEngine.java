@@ -269,10 +269,8 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final double[] pi = new double[]{0.01, 0.01, 0.98};
 
         // prior pseudocounts for the beta (f and epsilon)
-        final int alpha = numAltReadsForward + numAltReadsReverse;
-        final int beta = tumorBestAlleles.size();
-        final int eta = 0;
-        final int tau = 0;
+        final int alpha = 0;
+        final int beta = 0;
 
         // compute the posterior probabilities
         final double[] posterior_probabilities = new double[3];
@@ -280,31 +278,9 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         posterior_probabilities[ARTIFACT_REV] = pi[ARTIFACT_REV];
         posterior_probabilities[NO_ARTIFACTS] = pi[NO_ARTIFACTS];
 
+
+
     }
-
-    // https://www.cs.cmu.edu/~10701/lecture/technote2_betabinomial.pdf
-
-    /***
-     *
-     * Computes the predictive posterior probability of the beta-binomial model.
-     * You can set n = 0 and k = 0 if you would like to use the beta-binomial directly
-     *
-     * @param j number of heads in a yet-to-be-seen coin flip experiment
-     * @param m number of yet-to-be-seen coin flips
-     * @param n number of observed coin flips
-     * @param k number of heads observed
-     * @param alpha pseudocount for the number of heads
-     * @param beta pseudocount for the number of tails
-     * @return
-     */
-    private double betaBinomialProbability(final int j, final int m, final int n, final int k, final int alpha, final int beta){
-        Utils.validateArg(0 <= j && j <= m, "j must be within [0,m]");
-        // should I do this in log space?
-
-        final double probability = CombinatoricsUtils.factorial(m)/(CombinatoricsUtils.factorial(j)*C
-    }
-
-
 
     /** Calculate the likelihoods of hom ref and each het genotype of the form ref/alt
 
