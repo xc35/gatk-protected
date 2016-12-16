@@ -4,9 +4,12 @@ import com.google.cloud.dataflow.sdk.repackaged.com.google.common.primitives.Dou
 import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
 import org.broadinstitute.hellbender.utils.OptimizationUtils;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
+import org.broadinstitute.hellbender.utils.param.ParamUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 
 /**
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
@@ -34,10 +37,16 @@ public final class CopyRatioSegmenter extends ScalarHMMSegmenter<Double> {
      * @param K the initial number of hidden states
      */
     private static List<Double> initialLog2CopyRatios(final int K) {
-        final List<Double> result = Doubles.asList(GATKProtectedMathUtils.createEvenlySpacedPoints(-3, 2, K));
-        result.set(NEUTRAL_VALUE_INDEX, NEUTRAL_LOG_2_COPY_RATIO);
+        final List<Double> result = new ArrayList<>();
+        result.add(NEUTRAL_LOG_2_COPY_RATIO);   // 2, neutral is never pruned and goes first
+        result.add(MIN_LOG_2_COPY_RATIO);       // 0
+        result.add(ParamUtils.log2(0.5));       // 1
+        IntStream.range(3, K).forEach(n -> result.add(ParamUtils.log2(n / 2.0)));
         return result;
     }
+
+    @Override
+    protected void relearnHiddenStateValues(final ExpectationStep eStep) { }
 
     @Override
     protected ClusteringGenomicHMM<Double, Double> makeModel() {
