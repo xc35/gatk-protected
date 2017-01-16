@@ -44,29 +44,46 @@ biallelic
 \begin{itemize}
 	\item $z \sim \text{Multinomial}(\pi)$, where $z  \in \{ \text{artifact on forward strand}, \text{artifact on reverse strand}, \text{no artifact} \}$, represents the presence of the strand artifact in either the forward or reverse reads. For instance, artifact on forward strand means that the artifactual evidence for the alternate allele was detected in the forward (+) reads but not in the reverse (-) reads. (REWORD)
 	\item $f \sim \text{Unif}(0, 1)$ represents the true allele fraction at the site.
-	\item $\epsilon \sim \text{Beta}(\alpha, \beta)$ represents the allele fraction of a strand artifact.
+	\item $\epsilon \sim \text{Beta}(\alpha, \beta)$ represents the allele fraction of strand-specific artifact. (Not strictly true...?)
 	\item $x^+ | f, \epsilon, z \sim$ A mixture of binomials, defined as:
 		\begin{itemize}
 			\item $x^+ | f, \epsilon, z = \text{Artifact+} \sim \text{Binomial} (n^+, f + \epsilon(1-f))$
 			\item $x^+ | f, \epsilon, z = \text{Artifact-} \sim \text{Binomial} (n^+, f)$
 			\item $x^+ | f, \epsilon, z = \text{NoArtifact} \sim \text{Binomial} (n^+, f)$
-		\end{itemize}			
+		\end{itemize}
+		The conditional distributions of $x^-$ are similar.
 \end{itemize}
 
-Having observed the read counts in the + and - directions, we can compute the posterior probabilities of the latent variable $z$, as described in detail below.
+Having observed the read counts in the + and - directions, we can compute the posterior probabilities of the latent variable $z$, as described below.
 
 \subsection{Posterior Probabilities}
 
-Latent variable $z$ takes on 3 values, so we simply enumerate the posterior probability for each case.
+Below we derive the posterior probability of discrete latent variable $z$.
 
 \begin{equation}
 \begin{split}
 P(z=Artifact+ |x^+, x^-) & \propto p(z) p(x^+, x^- | z=Artifact+) \\
-                     & = \iint_{f, \epsilon} p(z) p(f) p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \,df\,d\epsilon \\
-                     & = p(z) \iint_{f, \epsilon} p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \, d\epsilon  \, df \\
-                     & = p(z) \iint_{f, \epsilon} Binomial(x^+ | f + \epsilon(1-f), n^+) Binomial(x^- | f, n^-)    
+		    & = p(z) \iint_{f, \epsilon}  p(x^+, x^-, f, \epsilon | z) \,df\,d\epsilon \\
+		    & = p(z) \iint_{f, \epsilon}  p(f) p(\epsilon) p(x^+, x^- | z, f, \epsilon) \,df\,d\epsilon \\
+                     & = p(z) \iint_{f, \epsilon}  p(f) p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \,df\,d\epsilon \\
+                     & = p(z) \iint_{f, \epsilon}  p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \,df\,d\epsilon \\
+                     & = p(z) \iint_{f, \epsilon}  Beta(\epsilon|\alpha, \beta) Binomial(x^+ | f + \epsilon(1-f), n^+) Binomial(x^- | f, n^-) \,df\,d\epsilon \\
 \end{split}
 \end{equation}
+
+The posterior proability of no artifact follows the same derivation up to the second to last step. Here we get more simplifications because the conditional probabilities of $x^+$ and $x^-$ do not depend on $\epsilon$:
+
+\begin{equation}
+\begin{split}
+P(z=NoArtifact |x^+, x^-) & \propto p(z) p(x^+, x^- | z=NoArtifact) \\
+		    & = p(z) \iint_{f, \epsilon}  p(\epsilon) p(x^+ | z, f, \epsilon) p(x^- | z, f, \epsilon) \,df\,d\epsilon \\
+		    & = p(z) \int_{f}  p(x^+ | z, f) p(x^- | z, f) \,df \int_{\epsilon}  p(\epsilon) d\epsilon \\
+                     & = p(z) \int_{f}  Binomial(x^+ | f, n^+) Binomial(x^- | f, n^-) \,df \\
+\end{split}
+\end{equation}
+
+
+Note that once two of the three are calculated we may simply subtract their sum from 1 to get the third. No simple analytical solution exists for the double integrals in (1) and thus we must integrate it numerically.
 
 \subsection{Generative Model}
 
