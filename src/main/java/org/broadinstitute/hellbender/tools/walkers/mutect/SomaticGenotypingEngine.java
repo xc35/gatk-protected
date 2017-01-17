@@ -7,17 +7,18 @@ import org.apache.commons.lang.mutable.MutableDouble;
 import org.apache.commons.lang.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.math3.analysis.integration.gauss.GaussIntegrator;
+import org.apache.commons.math3.analysis.integration.gauss.GaussIntegratorFactory;
+import org.apache.commons.math3.distribution.BetaDistribution;
+import org.apache.commons.math3.distribution.BinomialDistribution;
+import org.apache.commons.math3.special.Beta;
 import org.apache.log4j.Logger;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.GenotypingEngine;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculator;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculatorProvider;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.*;
-import org.broadinstitute.hellbender.utils.MathUtils;
-import org.broadinstitute.hellbender.utils.QualityUtils;
-import org.broadinstitute.hellbender.utils.SimpleInterval;
-import org.broadinstitute.hellbender.utils.Utils;
+import org.broadinstitute.hellbender.utils.*;
 import org.broadinstitute.hellbender.utils.genotyper.LikelihoodMatrix;
 import org.broadinstitute.hellbender.utils.genotyper.ReadLikelihoods;
 import org.broadinstitute.hellbender.utils.genotyper.SampleList;
@@ -25,7 +26,6 @@ import org.broadinstitute.hellbender.utils.haplotype.Haplotype;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
-import org.apache.commons.math3.util.CombinatoricsUtils;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -252,9 +252,8 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
     }
 
 
-
-
     private void addNewStrandArtifactFilter(final ReadLikelihoods<Allele> likelihoods, final VariantContext mergedVC){
+        // TODO: remember why I used BestAllele, then document the thought process
         final Collection<ReadLikelihoods.BestAllele> tumorBestAlleles = likelihoods.bestAlleles(tumorSampleName);
         final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesForward = tumorBestAlleles.stream().filter(ba -> ! ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
         final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesReverse = tumorBestAlleles.stream().filter(ba -> ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
@@ -262,8 +261,11 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final int numRefReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
         final int numAltReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getAlternateAllele(0))).count(); // TODO: getAlternateAllele fails for triallelic
         final int numRefReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
+        final int numReadsForward = numAltReadsForward + numRefReadsForward;
+        final int numReadsReverse = numAltReadsReverse + numRefReadsReverse;
+        final int numReads = numReadsForward + numReadsReverse;
 
-        final int ARTIFACT_FWD = 0, ARTIFACT_REV = 1, NO_ARTIFACTS = 2;
+        final int ARTIFACT_FWD = 0, ARTIFACT_REV = 1, NO_ARTIFACT = 2;
 
         // prior probabilities for z
         final double[] pi = new double[]{0.01, 0.01, 0.98};
@@ -273,14 +275,65 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final int beta = 0;
 
         // compute the posterior probabilities
+        // YOUR CODE HERE
         final double[] posterior_probabilities = new double[3];
-        posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD];
-        posterior_probabilities[ARTIFACT_REV] = pi[ARTIFACT_REV];
-        posterior_probabilities[NO_ARTIFACTS] = pi[NO_ARTIFACTS];
 
+        // use the example in HeterogeneousHeterozygousPileupPriorModel.java
+        // actual integration takes place in getHetLogLikelihood()
 
+        // first compute the NO_ARTIFACT case
+        // the integrand is a polynomial of degree n, where n is the number of reads at the locus
+        // thus to integrate exactly we need (n/2)+1 points
 
+        final int numIntegPoints = numReads/2 + 1;
+        final GaussIntegratorFactory integratorFactory = new GaussIntegratorFactory();
+        final GaussIntegrator gaussIntegrator = integratorFactory.legendre(numIntegPoints, 0.0, 1.0);
+
+        // TODO: lookup boxed
+        final List<Double> gaussIntegrationWeights = IntStream.range(0, numIntegPoints).mapToDouble(gaussIntegrator::getWeight).boxed().collect(Collectors.toList());
+        final List<Double> gaussIntegrationAbscissas = IntStream.range(0, numIntegPoints).mapToDouble(gaussIntegrator::getPoint).boxed().collect(Collectors.toList());
+        final List<Double> integrandsForNoArtifact = gaussIntegrationAbscissas.stream()
+                .map(f -> getIntegrandForNoArtifact(f, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse))
+                .collect(Collectors.toList());
+        final double likelihoodForNoArtifact = IntStream.range(0, numIntegPoints).mapToDouble(i -> gaussIntegrationWeights.get(i)*integrandsForNoArtifact.get(i)).sum();
+        posterior_probabilities[NO_ARTIFACT] = pi[NO_ARTIFACT]*likelihoodForNoArtifact;
+
+        // then compute the ARTIFACT_FWD case
+        // double integral
+        // TODO: update numIntegPoints
+        // TODO: do now use for loop
+        double likelihoodForArtifactFwd = 0.0;
+        for (int i = 0; i < numIntegPoints; i++) {
+            for (int j = 0; j < numIntegPoints; j++) {
+                double f = gaussIntegrationAbscissas.get(i);
+                double epsilon = gaussIntegrationAbscissas.get(j);
+                double integrand = getIntegrandForArtifactFwd(f, epsilon, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse);
+                likelihoodForArtifactFwd += gaussIntegrationWeights.get(i) * gaussIntegrationWeights.get(j) * integrand;
+            }
+        }
+
+        posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD] * likelihoodForArtifactFwd;
+        posterior_probabilities[ARTIFACT_REV] = 1 - ( posterior_probabilities[ARTIFACT_FWD] + posterior_probabilities[NO_ARTIFACT] );
     }
+
+    private double getIntegrandForNoArtifact(final double f, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
+        final BinomialDistribution binomFwd = new BinomialDistribution(n_plus, f);
+        final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
+        
+        return binomFwd.probability(x_plus)*binomRev.probability(x_minus);
+    }
+
+    final int alpha = 3;
+    final int beta = 1;
+    private double getIntegrandForArtifactFwd(final double f, final double epsilon, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
+
+        final BinomialDistribution binomFwd = new BinomialDistribution(n_plus, f + epsilon*(1-f));
+        final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
+        final BetaDistribution betaPrior = new BetaDistribution(alpha, beta);
+
+        return betaPrior.probability(epsilon) * binomFwd.probability(x_plus) * binomRev.probability(x_minus);
+    }
+
 
     /** Calculate the likelihoods of hom ref and each het genotype of the form ref/alt
 

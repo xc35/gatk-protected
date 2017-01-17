@@ -71,20 +71,10 @@ public class Mutect2FilteringEngine {
         }
     }
 
-    private static void applyStrandBiasFilter(final M2ArgumentCollection MTAC, final VariantContext vc, final Collection<String> filters) {
-        if (MTAC.ENABLE_STRAND_ARTIFACT_FILTER) {
-            if (vc.hasAttribute(GATKVCFConstants.TLOD_FWD_KEY) && vc.hasAttribute(GATKVCFConstants.TLOD_REV_KEY)
-                    && vc.hasAttribute(GATKVCFConstants.TUMOR_SB_POWER_FWD_KEY) && vc.hasAttribute(GATKVCFConstants.TUMOR_SB_POWER_REV_KEY)) {
-                final double forwardLod = vc.getAttributeAsDouble(GATKVCFConstants.TLOD_FWD_KEY, 0.0);
-                final double reverseLod = vc.getAttributeAsDouble(GATKVCFConstants.TLOD_REV_KEY, 0.0);
-                final double forwardPower = vc.getAttributeAsDouble(GATKVCFConstants.TUMOR_SB_POWER_FWD_KEY, 0.0);
-                final double reversePower = vc.getAttributeAsDouble(GATKVCFConstants.TUMOR_SB_POWER_REV_KEY, 0.0);
-                if ((forwardPower > MTAC.STRAND_ARTIFACT_POWER_THRESHOLD && forwardLod < MTAC.STRAND_ARTIFACT_LOD_THRESHOLD) ||
-                        (reversePower > MTAC.STRAND_ARTIFACT_POWER_THRESHOLD && reverseLod < MTAC.STRAND_ARTIFACT_LOD_THRESHOLD)) {
-                    filters.add(GATKVCFConstants.STRAND_ARTIFACT_FILTER_NAME);
-                }
-            }
-        }
+    private static void applyStrandArtifactFilter(final M2ArgumentCollection MTAC, final VariantContext vc, final Collection<String> filters) {
+        // strand artifact code goes here
+        // TODO: the integration test must contain A) real strand artifact B) true positive that may look like a strand artifact
+        final int x_plus = 3;
     }
 
     private static void applyEventDistanceFilters(final VariantContext vc, final Collection<String> filters) {
@@ -102,7 +92,7 @@ public class Mutect2FilteringEngine {
         applyPanelOfNormalsFilter(MTAC, vc, filters);
         applyGermlineVariantFilter(MTAC, vc, filters);
         applyClusteredReadPositionFilter(MTAC, vc, filters);
-        applyStrandBiasFilter(MTAC, vc, filters);
+        applyStrandArtifactFilter(MTAC, vc, filters);
         applySTRFilter(vc, filters);
 
         return filters;
