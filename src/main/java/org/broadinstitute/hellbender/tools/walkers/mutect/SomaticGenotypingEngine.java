@@ -36,6 +36,7 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
     public static final String IN_COSMIC_VCF_ATTRIBUTE = "IN_COSMIC";
     public static final String IN_DBSNP_VCF_ATTRIBUTE = "IN_DBSNP";
     public static final String IN_PON_VCF_ATTRIBUTE = "IN_PON";
+    public static final String STRAND_ARTIFACT_POSTERIOR_PROBABILITIES_KEY = "STRAND_ARTIFACT_POSTERIOR_PROBABILITIES";
 
     private final M2ArgumentCollection MTAC;
     private final TumorPowerCalculator strandArtifactPowerCalculator;
@@ -159,7 +160,7 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
             //TODO: multiple alt alleles -- per-allele strand bias
             final List<Allele> allSomaticAlleles = ListUtils.union(Arrays.asList(mergedVC.getReference()), somaticAltAlleles);
             final Allele alleleWithHighestTumorLOD = somaticAltAlleles.get(0);
-            addStrandBiasAnnotations(readAlleleLikelihoods, tumorAlleleFractions, alleleWithHighestTumorLOD, callVcb);
+            addStrandBiasAnnotations(readAlleleLikelihoods, callVcb, allSomaticAlleles);
 
             if (!featureContext.getValues(MTAC.cosmicFeatureInput, loc).isEmpty()) {
                 callVcb.attribute(IN_COSMIC_VCF_ATTRIBUTE, true);
@@ -233,36 +234,23 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         return new VariantContextBuilder(callVcb).alleles(allSomaticAlleles).genotypes(genotypes).make();
     }
 
-    private void addStrandBiasAnnotations(final ReadLikelihoods<Allele> likelihoods, PerAlleleCollection<Double> altAlleleFractions, Allele alleleWithHighestTumorLOD, VariantContextBuilder callVcb) {
-        final PerAlleleCollection<Double> tumorForwardLogOdds = getHetGenotypeLogOdds(likelihoods, false, Strand.FORWARD);
-        final PerAlleleCollection<Double> tumorReverseLogOdds = getHetGenotypeLogOdds(likelihoods, false, Strand.REVERSE);
+    private void addStrandBiasAnnotations(final ReadLikelihoods<Allele> likelihoods,
+                                          final VariantContextBuilder callVcb,
+                                          final List<Allele> allSomaticAlleles) {
+        // TODO: must find a way to access n+, x+, etc. that we currently compute from ReadLikelihoods from vcf. We probably have to store them in the vcf
+        // TODO: how should we handle multi-allelic sites?
+        final Allele refAllele = allSomaticAlleles.get(0);
+        final Allele altAlelle = allSomaticAlleles.get(1);
 
-        final List<GATKRead> tumorReads = likelihoods.sampleReads(likelihoods.indexOfSample(tumorSampleName));
-        final int tumorReverseReadCount = (int) tumorReads.stream().filter(GATKRead::isReverseStrand).count();
-        final int tumorForwardReadCount = tumorReads.size() - tumorReverseReadCount;
-
-        // Note that we use the observed combined (+ and -) allele fraction for power calculation in either direction
-        final double tumorSBpower_fwd = strandArtifactPowerCalculator.cachedPowerCalculation(tumorForwardReadCount, altAlleleFractions.getAlt(alleleWithHighestTumorLOD));
-        final double tumorSBpower_rev = strandArtifactPowerCalculator.cachedPowerCalculation(tumorReverseReadCount, altAlleleFractions.getAlt(alleleWithHighestTumorLOD));
-
-        callVcb.attribute(GATKVCFConstants.TLOD_FWD_KEY, tumorForwardLogOdds.getAlt(alleleWithHighestTumorLOD));
-        callVcb.attribute(GATKVCFConstants.TLOD_REV_KEY, tumorReverseLogOdds.getAlt(alleleWithHighestTumorLOD));
-        callVcb.attribute(GATKVCFConstants.TUMOR_SB_POWER_FWD_KEY, tumorSBpower_fwd);
-        callVcb.attribute(GATKVCFConstants.TUMOR_SB_POWER_REV_KEY, tumorSBpower_rev);
-    }
-
-
-    private void addNewStrandArtifactFilter(final ReadLikelihoods<Allele> likelihoods, final VariantContext mergedVC){
-        // TODO: remember why I used BestAllele, then document the thought process
-        final Collection<ReadLikelihoods.BestAllele> tumorBestAlleles = likelihoods.bestAlleles(tumorSampleName);
-        final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesForward = tumorBestAlleles.stream().filter(ba -> ! ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
-        final Collection<ReadLikelihoods.BestAllele> tumorBestAllelesReverse = tumorBestAlleles.stream().filter(ba -> ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
-        final int numAltReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(mergedVC.getAlternateAllele(0))).count(); // TODO: getAlternateAllele fails for triallelic
-        final int numRefReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
-        final int numAltReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getAlternateAllele(0))).count(); // TODO: getAlternateAllele fails for triallelic
-        final int numRefReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(mergedVC.getReference())).count();
-        final int numReadsForward = numAltReadsForward + numRefReadsForward;
-        final int numReadsReverse = numAltReadsReverse + numRefReadsReverse;
+        final Collection<ReadLikelihoods<Allele>.BestAllele> tumorBestAlleles = likelihoods.bestAlleles(tumorSampleName);
+        final Collection<ReadLikelihoods<Allele>.BestAllele> tumorBestAllelesForward = tumorBestAlleles.stream().filter(ba -> ! ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
+        final Collection<ReadLikelihoods<Allele>.BestAllele> tumorBestAllelesReverse = tumorBestAlleles.stream().filter(ba -> ba.read.isReverseStrand() && ba.isInformative()).collect(Collectors.toList());
+        final int numAltReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(altAlelle)).count(); // TODO: getAlternateAllele fails for triallelic
+        final int numRefReadsForward = (int) tumorBestAllelesForward.stream().filter(ba -> ba.allele.equals(refAllele)).count();
+        final int numAltReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(altAlelle)).count(); // TODO: getAlternateAllele fails for triallelic
+        final int numRefReadsReverse = (int) tumorBestAllelesReverse.stream().filter(ba -> ba.allele.equals(refAllele)).count();
+        final int numReadsForward = tumorBestAllelesForward.size(); // or should it be numAltReadsForward + numRefReadsForward?
+        final int numReadsReverse = tumorBestAllelesReverse.size(); // ditto
         final int numReads = numReadsForward + numReadsReverse;
 
         final int ARTIFACT_FWD = 0, ARTIFACT_REV = 1, NO_ARTIFACT = 2;
@@ -270,13 +258,9 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         // prior probabilities for z
         final double[] pi = new double[]{0.01, 0.01, 0.98};
 
-        // prior pseudocounts for the beta (f and epsilon)
-        final int alpha = 0;
-        final int beta = 0;
-
         // compute the posterior probabilities
         // YOUR CODE HERE
-        final double[] posterior_probabilities = new double[3];
+        final double[] posterior_probabilities = new double[pi.length];
 
         // use the example in HeterogeneousHeterozygousPileupPriorModel.java
         // actual integration takes place in getHetLogLikelihood()
@@ -285,17 +269,24 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         // the integrand is a polynomial of degree n, where n is the number of reads at the locus
         // thus to integrate exactly we need (n/2)+1 points
 
-        final int numIntegPoints = numReads/2 + 1;
+        final int numIntegPointsForAlleleFraction = numReads/2 + 1;
+        final int numIntegPointsForEpsilon = (numReads + alpha + beta - 2)/2 + 1;
+
         final GaussIntegratorFactory integratorFactory = new GaussIntegratorFactory();
-        final GaussIntegrator gaussIntegrator = integratorFactory.legendre(numIntegPoints, 0.0, 1.0);
+        final GaussIntegrator gaussIntegratorForAlleleFraction = integratorFactory.legendre(numIntegPointsForAlleleFraction, 0.0, 1.0);
+        final GaussIntegrator gaussIntegratorForEpsilon = integratorFactory.legendre(numIntegPointsForEpsilon, 0.0, 1.0);
+
 
         // TODO: lookup boxed
-        final List<Double> gaussIntegrationWeights = IntStream.range(0, numIntegPoints).mapToDouble(gaussIntegrator::getWeight).boxed().collect(Collectors.toList());
-        final List<Double> gaussIntegrationAbscissas = IntStream.range(0, numIntegPoints).mapToDouble(gaussIntegrator::getPoint).boxed().collect(Collectors.toList());
-        final List<Double> integrandsForNoArtifact = gaussIntegrationAbscissas.stream()
+        final List<Double> gaussIntegrationWeightsForAlleleFraction = IntStream.range(0, numIntegPointsForAlleleFraction).mapToDouble(gaussIntegratorForAlleleFraction::getWeight).boxed().collect(Collectors.toList());
+        final List<Double> gaussIntegrationAbscissasForAlleleFraction = IntStream.range(0, numIntegPointsForAlleleFraction).mapToDouble(gaussIntegratorForAlleleFraction::getPoint).boxed().collect(Collectors.toList());
+        final List<Double> gaussIntegrationWeightsForEpsilon = IntStream.range(0, numIntegPointsForEpsilon).mapToDouble(gaussIntegratorForEpsilon::getWeight).boxed().collect(Collectors.toList());
+        final List<Double> gaussIntegrationAbscissasForEpsilon = IntStream.range(0, numIntegPointsForEpsilon).mapToDouble(gaussIntegratorForEpsilon::getPoint).boxed().collect(Collectors.toList());
+
+        final List<Double> integrandsForNoArtifact = gaussIntegrationAbscissasForAlleleFraction.stream()
                 .map(f -> getIntegrandForNoArtifact(f, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse))
                 .collect(Collectors.toList());
-        final double likelihoodForNoArtifact = IntStream.range(0, numIntegPoints).mapToDouble(i -> gaussIntegrationWeights.get(i)*integrandsForNoArtifact.get(i)).sum();
+        final double likelihoodForNoArtifact = IntStream.range(0, numIntegPointsForAlleleFraction).mapToDouble(i -> gaussIntegrationWeightsForAlleleFraction.get(i)*integrandsForNoArtifact.get(i)).sum();
         posterior_probabilities[NO_ARTIFACT] = pi[NO_ARTIFACT]*likelihoodForNoArtifact;
 
         // then compute the ARTIFACT_FWD case
@@ -303,27 +294,44 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         // TODO: update numIntegPoints
         // TODO: do now use for loop
         double likelihoodForArtifactFwd = 0.0;
-        for (int i = 0; i < numIntegPoints; i++) {
-            for (int j = 0; j < numIntegPoints; j++) {
-                double f = gaussIntegrationAbscissas.get(i);
-                double epsilon = gaussIntegrationAbscissas.get(j);
+        for (int i = 0; i < numIntegPointsForAlleleFraction; i++) {
+            for (int j = 0; j < numIntegPointsForEpsilon; j++) {
+                double f = gaussIntegrationAbscissasForAlleleFraction.get(i);
+                double epsilon = gaussIntegrationAbscissasForEpsilon.get(j);
                 double integrand = getIntegrandForArtifactFwd(f, epsilon, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse);
-                likelihoodForArtifactFwd += gaussIntegrationWeights.get(i) * gaussIntegrationWeights.get(j) * integrand;
+                likelihoodForArtifactFwd += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrand;
             }
         }
 
         posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD] * likelihoodForArtifactFwd;
-        posterior_probabilities[ARTIFACT_REV] = 1 - ( posterior_probabilities[ARTIFACT_FWD] + posterior_probabilities[NO_ARTIFACT] );
+
+
+        // TODO: figure this out
+        double likelihoodForArtifactRev = 0.0;
+        for (int i = 0; i < numIntegPointsForAlleleFraction; i++) {
+            for (int j = 0; j < numIntegPointsForEpsilon; j++) {
+                double f = gaussIntegrationAbscissasForAlleleFraction.get(i);
+                double epsilon = gaussIntegrationAbscissasForEpsilon.get(j);
+                double integrand = getIntegrandForArtifactFwd(f, epsilon, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse);
+                likelihoodForArtifactFwd += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrand;
+            }
+        }
+
+        posterior_probabilities[ARTIFACT_REV] =
+
+        callVcb.attribute(STRAND_ARTIFACT_POSTERIOR_PROBABILITIES_KEY, posterior_probabilities);
     }
 
     private double getIntegrandForNoArtifact(final double f, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
         final BinomialDistribution binomFwd = new BinomialDistribution(n_plus, f);
         final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
-        
+
         return binomFwd.probability(x_plus)*binomRev.probability(x_minus);
     }
 
-    final int alpha = 3;
+    // prior pseudocounts for the beta distribution over epsilon
+    // alpha > 0 and beta > 0. alpha = beta = 1 gives us the flat prior.
+    final int alpha = 1;
     final int beta = 1;
     private double getIntegrandForArtifactFwd(final double f, final double epsilon, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
 
@@ -331,7 +339,7 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
         final BetaDistribution betaPrior = new BetaDistribution(alpha, beta);
 
-        return betaPrior.probability(epsilon) * binomFwd.probability(x_plus) * binomRev.probability(x_minus);
+        return betaPrior.density(epsilon) * binomFwd.probability(x_plus) * binomRev.probability(x_minus);
     }
 
 

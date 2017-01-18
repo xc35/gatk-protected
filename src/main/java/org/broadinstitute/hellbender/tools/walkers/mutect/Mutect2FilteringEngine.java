@@ -74,7 +74,7 @@ public class Mutect2FilteringEngine {
     private static void applyStrandArtifactFilter(final M2ArgumentCollection MTAC, final VariantContext vc, final Collection<String> filters) {
         // strand artifact code goes here
         // TODO: the integration test must contain A) real strand artifact B) true positive that may look like a strand artifact
-        final int x_plus = 3;
+
     }
 
     private static void applyEventDistanceFilters(final VariantContext vc, final Collection<String> filters) {
