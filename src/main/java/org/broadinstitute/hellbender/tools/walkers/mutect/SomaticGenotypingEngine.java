@@ -11,7 +11,6 @@ import org.apache.commons.math3.analysis.integration.gauss.GaussIntegrator;
 import org.apache.commons.math3.analysis.integration.gauss.GaussIntegratorFactory;
 import org.apache.commons.math3.distribution.BetaDistribution;
 import org.apache.commons.math3.distribution.BinomialDistribution;
-import org.apache.commons.math3.special.Beta;
 import org.apache.log4j.Logger;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
@@ -29,6 +28,7 @@ import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 
 public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine {
@@ -260,7 +260,7 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
 
         // compute the posterior probabilities
         // YOUR CODE HERE
-        final double[] posterior_probabilities = new double[pi.length];
+        final double[] unnormalized_posterior_probabilities = new double[pi.length];
 
         // use the example in HeterogeneousHeterozygousPileupPriorModel.java
         // actual integration takes place in getHetLogLikelihood()
@@ -284,45 +284,37 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final List<Double> gaussIntegrationAbscissasForEpsilon = IntStream.range(0, numIntegPointsForEpsilon).mapToDouble(gaussIntegratorForEpsilon::getPoint).boxed().collect(Collectors.toList());
 
         final List<Double> integrandsForNoArtifact = gaussIntegrationAbscissasForAlleleFraction.stream()
-                .map(f -> getIntegrandForNoArtifact(f, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse))
+                .map(f -> getIntegrandNoArtifact(f, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse))
                 .collect(Collectors.toList());
         final double likelihoodForNoArtifact = IntStream.range(0, numIntegPointsForAlleleFraction).mapToDouble(i -> gaussIntegrationWeightsForAlleleFraction.get(i)*integrandsForNoArtifact.get(i)).sum();
-        posterior_probabilities[NO_ARTIFACT] = pi[NO_ARTIFACT]*likelihoodForNoArtifact;
+        unnormalized_posterior_probabilities[NO_ARTIFACT] = pi[NO_ARTIFACT]*likelihoodForNoArtifact;
 
         // then compute the ARTIFACT_FWD case
         // double integral
         // TODO: update numIntegPoints
-        // TODO: do now use for loop
+        // TODO: do not use for loops
         double likelihoodForArtifactFwd = 0.0;
-        for (int i = 0; i < numIntegPointsForAlleleFraction; i++) {
-            for (int j = 0; j < numIntegPointsForEpsilon; j++) {
-                double f = gaussIntegrationAbscissasForAlleleFraction.get(i);
-                double epsilon = gaussIntegrationAbscissasForEpsilon.get(j);
-                double integrand = getIntegrandForArtifactFwd(f, epsilon, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse);
-                likelihoodForArtifactFwd += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrand;
-            }
-        }
-
-        posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD] * likelihoodForArtifactFwd;
-
-
-        // TODO: figure this out
         double likelihoodForArtifactRev = 0.0;
         for (int i = 0; i < numIntegPointsForAlleleFraction; i++) {
             for (int j = 0; j < numIntegPointsForEpsilon; j++) {
                 double f = gaussIntegrationAbscissasForAlleleFraction.get(i);
                 double epsilon = gaussIntegrationAbscissasForEpsilon.get(j);
-                double integrand = getIntegrandForArtifactFwd(f, epsilon, numReadsForward, numAltReadsReverse, numAltReadsForward, numAltReadsReverse);
-                likelihoodForArtifactFwd += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrand;
+                double integrandArtifactFwd = getIntegrandWithArtifact(f, epsilon, numReadsForward, numReadsReverse, numAltReadsForward, numAltReadsReverse);
+                double integrandArtifactRev = getIntegrandWithArtifact(f, epsilon, numReadsReverse, numReadsForward, numAltReadsReverse, numAltReadsForward);
+                likelihoodForArtifactFwd += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrandArtifactFwd;
+                likelihoodForArtifactRev += gaussIntegrationWeightsForAlleleFraction.get(i) * gaussIntegrationWeightsForEpsilon.get(j) * integrandArtifactRev;
             }
         }
 
-        posterior_probabilities[ARTIFACT_REV] =
+        unnormalized_posterior_probabilities[ARTIFACT_FWD] = pi[ARTIFACT_FWD] * likelihoodForArtifactFwd;
+        unnormalized_posterior_probabilities[ARTIFACT_REV] = pi[ARTIFACT_REV] * likelihoodForArtifactRev;
+        final double normalizing_constant = DoubleStream.of(unnormalized_posterior_probabilities).sum();
+        final double[] posterior_probabilities = DoubleStream.of(unnormalized_posterior_probabilities).map(x -> x/normalizing_constant).toArray();
 
         callVcb.attribute(STRAND_ARTIFACT_POSTERIOR_PROBABILITIES_KEY, posterior_probabilities);
     }
 
-    private double getIntegrandForNoArtifact(final double f, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
+    private double getIntegrandNoArtifact(final double f, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
         final BinomialDistribution binomFwd = new BinomialDistribution(n_plus, f);
         final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
 
@@ -333,13 +325,13 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
     // alpha > 0 and beta > 0. alpha = beta = 1 gives us the flat prior.
     final int alpha = 1;
     final int beta = 1;
-    private double getIntegrandForArtifactFwd(final double f, final double epsilon, final int n_plus, final int n_minus, final int x_plus, final int x_minus){
+    private double getIntegrandWithArtifact(final double f, final double epsilon, final int nWithArtifact, final int nNoArtifact, final int xWithArtifact, final int xNoArtifact){
 
-        final BinomialDistribution binomFwd = new BinomialDistribution(n_plus, f + epsilon*(1-f));
-        final BinomialDistribution binomRev = new BinomialDistribution(n_minus, f);
+        final BinomialDistribution binomWithArtifact = new BinomialDistribution(nWithArtifact, f + epsilon*(1-f));
+        final BinomialDistribution binomNoArtifact = new BinomialDistribution(nNoArtifact, f);
         final BetaDistribution betaPrior = new BetaDistribution(alpha, beta);
 
-        return betaPrior.density(epsilon) * binomFwd.probability(x_plus) * binomRev.probability(x_minus);
+        return betaPrior.density(epsilon) * binomWithArtifact.probability(xWithArtifact) * binomNoArtifact.probability(xNoArtifact);
     }
 
 
