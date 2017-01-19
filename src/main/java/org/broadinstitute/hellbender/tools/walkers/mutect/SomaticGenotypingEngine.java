@@ -237,6 +237,8 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
     private void addStrandBiasAnnotations(final ReadLikelihoods<Allele> likelihoods,
                                           final VariantContextBuilder callVcb,
                                           final List<Allele> allSomaticAlleles) {
+        // TODO: is it possible to use the data in the matched normal as well?
+        // TODO: we must not penalize the cases near the edges of targets
         // TODO: must find a way to access n+, x+, etc. that we currently compute from ReadLikelihoods from vcf. We probably have to store them in the vcf
         // TODO: how should we handle multi-allelic sites?
         final Allele refAllele = allSomaticAlleles.get(0);
@@ -323,8 +325,8 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
 
     // prior pseudocounts for the beta distribution over epsilon
     // alpha > 0 and beta > 0. alpha = beta = 1 gives us the flat prior.
-    final int alpha = 1;
-    final int beta = 1;
+    final int alpha = 2;
+    final int beta = 6; // give more prior weight to beta (i.e. pseudocount for tails) so that the peak shifts towards 0
     private double getIntegrandWithArtifact(final double f, final double epsilon, final int nWithArtifact, final int nNoArtifact, final int xWithArtifact, final int xNoArtifact){
 
         final BinomialDistribution binomWithArtifact = new BinomialDistribution(nWithArtifact, f + epsilon*(1-f));
