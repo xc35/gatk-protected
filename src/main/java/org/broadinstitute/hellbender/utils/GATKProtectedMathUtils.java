@@ -268,4 +268,11 @@ public class GATKProtectedMathUtils {
         Utils.validateArg(array1.size() > 0, "arrays must be non-empty");
         return IntStream.range(0, array1.size()).mapToDouble(n -> Math.abs(array1.get(n) - array2.get(n))).max().getAsDouble();
     }
+
+    public static void addToArrayInPlace(final double[] array, final double[] summand) {
+        Utils.validateArg(array.length == summand.length, "Arrays must have same length");
+        for (int n = 0; n < array.length; n++) {
+            array[n] += summand[n];
+        }
+    }
 }
