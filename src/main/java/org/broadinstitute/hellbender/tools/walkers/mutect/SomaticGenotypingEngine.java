@@ -7,13 +7,11 @@ import org.apache.commons.lang.mutable.MutableDouble;
 import org.apache.commons.lang.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.commons.math3.linear.RealVector;
 import org.apache.commons.math3.special.Gamma;
 import org.apache.commons.math3.util.MathArrays;
 import org.apache.log4j.Logger;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
-import org.broadinstitute.hellbender.tools.walkers.genotyper.GenotypingEngine;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculator;
 import org.broadinstitute.hellbender.tools.walkers.genotyper.afcalc.AFCalculatorProvider;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.*;
@@ -57,6 +55,7 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
     };
 
     private final static Logger logger = Logger.getLogger(SomaticGenotypingEngine.class);
+    public static final double CONVERGENCE_THRESHOLD = 0.001;
 
     @Override
     protected String callSourceString() {
@@ -397,81 +396,37 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
 
     //**** METHODS FOR NEW LIKELIHOODS MODEL
 
-    //TODO: write unit test
-
-    /**
-     *  Get fractional read counts for each allele under the assumption
-     * @param log10Likelihoods  matrix of log10 likelihoods -- rows are alleles, columns are reads
-     * @param alleles           subset of alleles to restrict to
-     * @param log10AlleleFractions  effective (eg in the sense of variational Bayesian mean field) log10 allele fractions
-     *                              of these alleles.  These do not need to be normalized.
-     * @return
-     */
-    private double[] alleleCounts(final LikelihoodMatrix<Allele> log10Likelihoods,
-                                                           final List<Allele> alleles,
-                                                           final double[] log10AlleleFractions) {
-        Utils.validateArg(alleles.size() == log10AlleleFractions.length, "Must have one allele fraction per allele.");
-        Utils.validateArg(alleles.stream().noneMatch(a -> log10Likelihoods.indexOfAllele(a) < 0), "Must have likelihoods for all alleles.");
-
-        final int[] alleleIndices = alleles.stream().mapToInt(log10Likelihoods::indexOfAllele).toArray();
-        final double[] result = new double[alleleIndices.length];
-
-        //TODO: method to sum Int -> double[] function
-        IntStream.range(0, log10Likelihoods.numberOfReads()).forEach(r -> {
-            final double[] log10Lks = MathUtils.applyToArray(alleleIndices, a-> log10Likelihoods.get(a,r));
-            final double[] responsibilities = responsibilities(log10AlleleFractions, log10Lks);
-            GATKProtectedMathUtils.addToArrayInPlace(result, responsibilities);
-        });
-
-        return result;
-    }
-
-    private double[] responsibilities(double[] log10Priors, double[] log10Likelihoods) {
-        final double[] log10Responsibilities = MathArrays.ebeAdd(log10Priors, log10Likelihoods);
-        return MathUtils.normalizeFromLog10ToLinearSpace(log10Responsibilities);
-    }
-
     //TODO: unit test
-    //TODO: return Pair of alleleFractions and pseudocounts?
-    private double[] alleleFractionsPosterior(final LikelihoodMatrix<Allele> log10Likelihoods,
-                                                     final List<Allele> alleles,
-                                                     final double[] priorPseudocounts) {
-        //TODO: extract
-        final double CONVERGENCE_THRESHOLD = 0.001;
+    private double[] alleleFractionsPosterior(final LikelihoodMatrix<Allele> log10Likelihoods, final double[] priorPseudocounts) {
+        Utils.validateArg(log10Likelihoods.numberOfAlleles() == priorPseudocounts.length, "Must have one pseudocount per allele.");
 
-        Utils.validateArg(alleles.stream().noneMatch(a -> log10Likelihoods.indexOfAllele(a) < 0), "Must have likelihoods for all alleles.");
-        double[] effectiveLog10AlleleFractions = new double[alleles.size()];
-        double[] dirichletPosterior = new double[alleles.size()];
+        double[] dirichletPosterior = new IndexRange(0, log10Likelihoods.numberOfAlleles()).mapToDouble(n -> 1.0);  // initialize flat posterior
         boolean converged = false;
 
         while(!converged) {
-            final double[] alleleCounts = alleleCounts(log10Likelihoods, alleles, effectiveLog10AlleleFractions);
-            dirichletPosterior = MathArrays.ebeAdd(alleleCounts, priorPseudocounts);
-            final double[] newEffectiveLog10AlleleFractions = new Dirichlet(dirichletPosterior).effectiveLog10MultinomialWeights();
-            converged = MathArrays.distance1(effectiveLog10AlleleFractions, newEffectiveLog10AlleleFractions) < CONVERGENCE_THRESHOLD;
-            effectiveLog10AlleleFractions = newEffectiveLog10AlleleFractions;
+            final double[] effectiveLog10AlleleFractions = new Dirichlet(dirichletPosterior).effectiveLog10MultinomialWeights();
+            final double[] alleleCounts = GATKProtectedMathUtils.sumArrayFunction(0, log10Likelihoods.numberOfReads(),
+                    read -> GATKProtectedMathUtils.posteriors(effectiveLog10AlleleFractions, getColumn(log10Likelihoods, read)));
+            final double[] newDirichletPosterior = MathArrays.ebeAdd(alleleCounts, priorPseudocounts);
+            converged = MathArrays.distance1(dirichletPosterior, newDirichletPosterior) < CONVERGENCE_THRESHOLD;
+            dirichletPosterior = newDirichletPosterior;
         }
 
         return dirichletPosterior;
     }
 
-    private double log10Evidence(final LikelihoodMatrix<Allele> log10Likelihoods,
-                                 final List<Allele> alleles,
-                                 final double[] priorPseudocounts) {
-        //TODO: validateArgs
-        final double[] alleleFractionsPosterior = alleleFractionsPosterior(log10Likelihoods, alleles, priorPseudocounts);
+    private double log10Evidence(final LikelihoodMatrix<Allele> log10Likelihoods, final double[] priorPseudocounts) {
+        Utils.validateArg(log10Likelihoods.numberOfAlleles() == priorPseudocounts.length, "Must have one pseudocount per allele.");
+        final double[] alleleFractionsPosterior = alleleFractionsPosterior(log10Likelihoods, priorPseudocounts);
         final double priorContribution = log10DirichletNormalization(priorPseudocounts);
         final double posteriorContribution = -log10DirichletNormalization(alleleFractionsPosterior);
 
         final double[] log10AlleleFractions = new Dirichlet(alleleFractionsPosterior).effectiveLog10MultinomialWeights();
-        final int[] alleleIndices = alleles.stream().mapToInt(log10Likelihoods::indexOfAllele).toArray();
 
         final double likelihoodsContribution = new IndexRange(0, log10Likelihoods.numberOfReads()).sum(r -> {
-            //TODO: code duplication with alleleCounts method
-            log10Likelihoods.
-            final double[] log10Lks = MathUtils.applyToArray(alleleIndices, a-> log10Likelihoods.get(a,r));
-            final double[] responsibilities = responsibilities(log10AlleleFractions, log10Lks);
-            return MathUtils.sum(MathArrays.ebeMultiply(log10Lks, responsibilities));
+            final double[] log10LikelihoodsForRead = getColumn(log10Likelihoods, r);
+            final double[] responsibilities = GATKProtectedMathUtils.posteriors(log10AlleleFractions, log10LikelihoodsForRead);
+            return MathUtils.sum(MathArrays.ebeMultiply(log10LikelihoodsForRead, responsibilities));
         });
 
         return priorContribution + posteriorContribution + likelihoodsContribution;
@@ -483,6 +438,11 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
         final double logNumerator = Gamma.logGamma(MathUtils.sum(dirichletParams));
         final double logDenominator = MathUtils.sum(MathUtils.applyToArray(dirichletParams, Gamma::logGamma));
         return MathUtils.lnToLog10(logNumerator - logDenominator);
+    }
+
+    //TODO: belongs in likelihoods matrix
+    private double[] getColumn(final LikelihoodMatrix<Allele> likelihoodMatrix, final int readIndex) {
+        return new IndexRange(0, likelihoodMatrix.numberOfAlleles()).mapToDouble(alleleIndex -> likelihoodMatrix.get(alleleIndex, readIndex));
     }
 
 

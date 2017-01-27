@@ -12,13 +12,15 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
+ * Fast wrapper for a LikelihoodMatrix that uses only a subset of alleles.  Useful for model comparison of different
+ * allele subsets without having to copy the underlying likelihoods.
  * Created by davidben on 1/26/17.
  */
 //TODO: consider making the constructor a static method that returns an anonymous class instance in AlleleSubsettingUtils
 public class SubsettedLikelihoodMatrix<A extends Allele> implements LikelihoodMatrix<A> {
-    final LikelihoodMatrix<A> matrix;
-    final List<A> alleles;
-    final Int2IntMap newToOldIndexMap;
+    private final LikelihoodMatrix<A> matrix;
+    private final List<A> alleles;
+    private final Int2IntMap newToOldIndexMap;
 
     public SubsettedLikelihoodMatrix(final LikelihoodMatrix<A> matrix, final List<A> alleles) {
         this.matrix = Utils.nonNull(matrix);

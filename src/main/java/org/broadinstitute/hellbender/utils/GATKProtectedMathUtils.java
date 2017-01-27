@@ -5,6 +5,7 @@ import org.apache.commons.math3.linear.RealMatrix;
 import org.apache.commons.math3.random.RandomGenerator;
 import org.apache.commons.math3.stat.descriptive.moment.Variance;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
+import org.apache.commons.math3.util.MathArrays;
 import org.apache.commons.math3.util.Pair;
 import org.broadinstitute.hellbender.utils.param.ParamUtils;
 
@@ -267,6 +268,30 @@ public class GATKProtectedMathUtils {
         Utils.validateArg(array1.size() == array2.size(), "arrays must have same length.");
         Utils.validateArg(array1.size() > 0, "arrays must be non-empty");
         return IntStream.range(0, array1.size()).mapToDouble(n -> Math.abs(array1.get(n) - array2.get(n))).max().getAsDouble();
+    }
+
+    public static double[] posteriors(double[] log10Priors, double[] log10Likelihoods) {
+        return MathUtils.normalizeFromLog10ToLinearSpace(MathArrays.ebeAdd(log10Priors, log10Likelihoods));
+    }
+
+    @FunctionalInterface
+    public interface IntToDoubleArrayFunction {
+        double[] apply(int value);
+    }
+
+    //TODO: unit test
+    // sum of int -> double[] function mapped to an index range
+    public static double[] sumArrayFunction(final int min, final int max, final IntToDoubleArrayFunction function) {
+        Utils.validateArg(max >= min, "max must be at least as great as min");
+        final double[] result = function.apply(min);
+        for (int n = min + 1; n < max; n++) {
+            final double[] newValues = function.apply(n);
+            Utils.validateArg(newValues.length != result.length, "array function returns different sizes for different inputs!");
+            for (int i = 0; i < result.length; i++) {
+                result[i] += newValues[i];
+            }
+        }
+        return result;
     }
 
     public static void addToArrayInPlace(final double[] array, final double[] summand) {
