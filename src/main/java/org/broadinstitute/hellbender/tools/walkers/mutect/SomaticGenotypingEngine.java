@@ -32,9 +32,6 @@ import java.util.stream.IntStream;
 
 public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine {
 
-    public static final String IN_COSMIC_VCF_ATTRIBUTE = "IN_COSMIC";
-    public static final String IN_DBSNP_VCF_ATTRIBUTE = "IN_DBSNP";
-    public static final String IN_PON_VCF_ATTRIBUTE = "IN_PON";
     public static final String NORMAL_ARTIFACT_LOD_ATTRIBUTE = "N_ART_LOD";
 
     private final M2ArgumentCollection MTAC;
@@ -160,18 +157,6 @@ public class SomaticGenotypingEngine extends AssemblyBasedCallerGenotypingEngine
             final List<Allele> allSomaticAlleles = ListUtils.union(Arrays.asList(mergedVC.getReference()), somaticAltAlleles);
             final Allele alleleWithHighestTumorLOD = somaticAltAlleles.get(0);
             addStrandBiasAnnotations(readAlleleLikelihoods, tumorAlleleFractions, alleleWithHighestTumorLOD, callVcb);
-
-            if (!featureContext.getValues(MTAC.cosmicFeatureInput, loc).isEmpty()) {
-                callVcb.attribute(IN_COSMIC_VCF_ATTRIBUTE, true);
-            }
-
-            if (!featureContext.getValues(MTAC.dbsnp.dbsnp, loc).isEmpty()) {
-                callVcb.attribute(IN_DBSNP_VCF_ATTRIBUTE, true);
-            }
-
-            if (!featureContext.getValues(MTAC.normalPanelFeatureInput, mergedVC.getStart()).isEmpty()) {
-                callVcb.attribute(IN_PON_VCF_ATTRIBUTE, true);
-            }
 
             final VariantContext call = addGenotypes(hasNormal, allSomaticAlleles, readAlleleLikelihoods, tumorAlleleFractions, callVcb);
             // how should we be making use of _perSampleFilteredReadList_?

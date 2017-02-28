@@ -27,23 +27,6 @@ public class M2ArgumentCollection extends AssemblyBasedCallerArgumentCollection 
 
     //TODO: END OF HACK ALERT
 
-    /***************************************/
-    // Reference Metadata inputs
-    /***************************************/
-    /**
-     * Mutect2 has the ability to use COSMIC data in conjunction with dbSNP to adjust the threshold for evidence of a variant
-     * in the normal.  If a variant is present in dbSNP, but not in COSMIC, then more evidence is required from the normal
-     * sample to prove the variant is not present in germline.
-     */
-    @Argument(fullName="cosmic", shortName = "cosmic", doc="VCF file of COSMIC sites", optional = true)
-    public FeatureInput<VariantContext> cosmicFeatureInput;
-
-    /**
-     * A panel of normals can be a useful (optional) input to help filter out commonly seen sequencing noise that may appear as low allele-fraction somatic variants.
-     */
-    @Argument(fullName="normal_panel", shortName = "PON", doc="VCF file of sites observed in normal", optional = true)
-    public FeatureInput<VariantContext> normalPanelFeatureInput;
-
     /**
      * This is the LOD threshold that a variant must pass in the tumor to be emitted to the VCF. Note that the variant may pass this threshold yet still be annotated as FILTERed based on other criteria.
      */
@@ -71,9 +54,6 @@ public class M2ArgumentCollection extends AssemblyBasedCallerArgumentCollection 
     @Hidden
     @Argument(fullName = "strand_artifact_lod", optional = true, doc = "LOD threshold for calling strand bias")
     public float STRAND_ARTIFACT_LOD_THRESHOLD = 2.0f;
-
-    @Argument(fullName = "enable_clustered_read_position_filter", optional = true, doc = "turn on clustered read position filter")
-    public boolean ENABLE_CLUSTERED_READ_POSITION_FILTER = false;
 
     /**
      * Reads with mapping qualities below this threshold will be filtered out

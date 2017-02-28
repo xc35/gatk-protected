@@ -112,11 +112,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
                     " sample name " + MTAC.normalSampleName);
         }
 
-        //TODO: add required annotations for all the filtering steps I propose
-        //TODO: how about add this annotation regardless but *filter* optionally?
-        if (MTAC.ENABLE_CLUSTERED_READ_POSITION_FILTER) {
-            MTAC.annotationsToUse.add("ClusteredReadPosition");
-        }
+        MTAC.annotationsToUse.add("ClusteredReadPosition");
 
         annotationEngine = VariantAnnotatorEngine.ofSelectedMinusExcluded(MTAC.annotationGroupsToUse,
                 MTAC.annotationsToUse,
@@ -186,12 +182,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
         STANDARD_M_2_INFO_FIELDS.stream().map(GATKVCFHeaderLines::getInfoLine).forEach(headerInfo::add);
         STRAND_ARTIFACT_INFO_FIELDS.stream().map(GATKVCFHeaderLines::getInfoLine).forEach(headerInfo::add);
 
-        headerInfo.add(new VCFInfoHeaderLine(SomaticGenotypingEngine.IN_COSMIC_VCF_ATTRIBUTE, 0, VCFHeaderLineType.Flag, "site found in COSMIC database"));
-        headerInfo.add(new VCFInfoHeaderLine(SomaticGenotypingEngine.IN_DBSNP_VCF_ATTRIBUTE, 0, VCFHeaderLineType.Flag, "site found in dbSNP database"));
-        headerInfo.add(new VCFInfoHeaderLine(SomaticGenotypingEngine.IN_PON_VCF_ATTRIBUTE, 0, VCFHeaderLineType.Flag, "site found in panel of normals"));
         headerInfo.add(new VCFInfoHeaderLine(SomaticGenotypingEngine.NORMAL_ARTIFACT_LOD_ATTRIBUTE, VCFHeaderLineCount.A, VCFHeaderLineType.Float, "log odds of artifact in normal with same allele fraction as tumor"));
-
-
         headerInfo.add(GATKVCFHeaderLines.getFormatLine(GATKVCFConstants.ALLELE_FRACTION_KEY));
 
         if ( ! MTAC.doNotRunPhysicalPhasing ) {
