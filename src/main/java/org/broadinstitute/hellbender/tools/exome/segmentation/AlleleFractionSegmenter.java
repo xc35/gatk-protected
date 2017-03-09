@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static org.broadinstitute.hellbender.utils.IntervalUtils.LEXICOGRAPHICAL_ORDER_COMPARATOR;
+
 /**
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
  */
@@ -35,8 +37,8 @@ public final class AlleleFractionSegmenter extends ScalarHMMSegmenter<AllelicCou
      * @param acc               The {@link AllelicCountCollection} data attached to this segmenter
      */
     public AlleleFractionSegmenter(final int initialNumStates, final AllelicCountCollection acc) {
-        super(acc.getCounts().stream().map(AllelicCount::getInterval).collect(Collectors.toList()),
-                acc.getCounts(), initialMinorFractions(initialNumStates));
+        super(acc.getCounts().stream().map(AllelicCount::getInterval).sorted(LEXICOGRAPHICAL_ORDER_COMPARATOR).collect(Collectors.toList()),
+                acc.getCounts().stream().sorted(LEXICOGRAPHICAL_ORDER_COMPARATOR).collect(Collectors.toList()), initialMinorFractions(initialNumStates));
     }
 
     /**
