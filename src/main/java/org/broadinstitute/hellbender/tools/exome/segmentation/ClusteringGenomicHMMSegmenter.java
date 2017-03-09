@@ -25,7 +25,8 @@ public abstract class ClusteringGenomicHMMSegmenter<DATA, HIDDEN> {
     private double memoryLength;
     private boolean parametersHaveBeenLearned = false;
 
-    private static final int MAX_EM_ITERATIONS = 50;
+    private static final int MIN_EM_ITERATIONS = 3;
+    private static final int MAX_EM_ITERATIONS = 15;
     protected final List<DATA> data;
 
     protected final List<SimpleInterval> positions;
@@ -37,7 +38,7 @@ public abstract class ClusteringGenomicHMMSegmenter<DATA, HIDDEN> {
     private static final double MAXIMUM_MEMORY_LENGTH = 1e10;
 
     protected static final double CONVERGENCE_THRESHOLD = 0.01;
-    private static final double MEMORY_LENGTH_CONVERGENCE_THRESHOLD = 1e4;
+    private static final double MEMORY_LENGTH_CONVERGENCE_THRESHOLD = 1e5;
 
     protected static final double RELATIVE_TOLERANCE_FOR_OPTIMIZATION = 0.01;
     protected static final double ABSOLUTE_TOLERANCE_FOR_OPTIMIZATION = 0.01;
@@ -84,6 +85,10 @@ public abstract class ClusteringGenomicHMMSegmenter<DATA, HIDDEN> {
 
     public List<Pair<SimpleInterval, HIDDEN>> findSegments() {
         makeSureParametersHaveBeenLearned();
+        return findSegmentsDuringLearning();
+    }
+
+    private List<Pair<SimpleInterval, HIDDEN>> findSegmentsDuringLearning() {
         final ClusteringGenomicHMM<DATA, HIDDEN> model = makeModel();
         List<Integer> states = ViterbiAlgorithm.apply(data, positions, model);
         List<Pair<SimpleInterval, HIDDEN>> result = new ArrayList<>();
@@ -106,22 +111,31 @@ public abstract class ClusteringGenomicHMMSegmenter<DATA, HIDDEN> {
                 }
             }
         }
+        logger.info(String.format("Number of segments: %d", result.size()));
         return result;
     }
 
     private void learn() {
         int iteration = 0;
         boolean converged = false;
+        List<Pair<SimpleInterval, HIDDEN>> oldSegments = new ArrayList<>();
         while (!converged && iteration++ < MAX_EM_ITERATIONS) {
             logger.info(String.format("Beginning iteration %d of learning.", iteration));
             logger.info(String.format("Current memory length: %f bases.", memoryLength));
 
-            final double oldMemoryLength = memoryLength;
+//            final double oldMemoryLength = memoryLength;
             final List<HIDDEN> oldHiddenStateValues = new ArrayList<>(hiddenStateValues);
             performEMIteration();
-            converged = oldHiddenStateValues.size() == numStates() &&
-                    Math.abs(oldMemoryLength - memoryLength) < MEMORY_LENGTH_CONVERGENCE_THRESHOLD &&
+            final List<Pair<SimpleInterval, HIDDEN>> currentSegments = findSegmentsDuringLearning();
+            converged =
+                    iteration > MIN_EM_ITERATIONS &&
+                    oldSegments.size() == currentSegments.size() &&
+//                    Math.abs(oldMemoryLength - memoryLength) < MEMORY_LENGTH_CONVERGENCE_THRESHOLD &&
                     hiddenStateValuesHaveConverged(oldHiddenStateValues);
+            oldSegments = currentSegments;
+            if (converged) {
+                logger.info("Segmentation converged.");
+            }
         }
         parametersHaveBeenLearned = true;
     }

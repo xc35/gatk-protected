@@ -4,6 +4,7 @@ import org.apache.commons.collections4.ListUtils;
 import org.broadinstitute.hellbender.utils.GATKProtectedMathUtils;
 import org.broadinstitute.hellbender.utils.OptimizationUtils;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
+import org.broadinstitute.hellbender.utils.Utils;
 
 import java.util.*;
 import java.util.function.Function;
@@ -18,6 +19,7 @@ import java.util.stream.IntStream;
 public abstract class ScalarHMMSegmenter<DATA> extends ClusteringGenomicHMMSegmenter<DATA, Double> {
 
     private static final double DEFAULT_MEMORY_LENGTH = 5e7;
+    private static final double EPSILON = 1E-10;
 
     public ScalarHMMSegmenter(final List<SimpleInterval> positions, final List<DATA> data, final List<Double> initialNonConstantHiddenStates) {
         super(positions, data, initialNonConstantHiddenStates, DEFAULT_MEMORY_LENGTH);
@@ -25,7 +27,7 @@ public abstract class ScalarHMMSegmenter<DATA> extends ClusteringGenomicHMMSegme
 
     @Override
     protected boolean hiddenStateValuesHaveConverged(final List<Double> oldHiddenStateValues) {
-        return oldHiddenStateValues.size() == numStates() && GATKProtectedMathUtils.maxDifference(oldHiddenStateValues, getStates()) < CONVERGENCE_THRESHOLD;
+        return oldHiddenStateValues.size() == numStates() && maxRelativeDifference(oldHiddenStateValues, getStates()) < CONVERGENCE_THRESHOLD;
     }
 
     @Override
@@ -43,4 +45,10 @@ public abstract class ScalarHMMSegmenter<DATA> extends ClusteringGenomicHMMSegme
 
     protected abstract double minHiddenStateValue();
     protected abstract double maxHiddenStateValue();
+
+    private static double maxRelativeDifference(final List<Double> array1, final List<Double> array2) {
+        Utils.validateArg(array1.size() == array2.size(), "arrays must have same length.");
+        Utils.validateArg(array1.size() > 0, "arrays must be non-empty");
+        return IntStream.range(0, array1.size()).mapToDouble(n -> Math.abs((array1.get(n) - array2.get(n)) / (array1.get(n) + EPSILON))).max().getAsDouble();
+    }
 }

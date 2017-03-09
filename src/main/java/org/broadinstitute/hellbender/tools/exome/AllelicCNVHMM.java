@@ -238,6 +238,7 @@ public class AllelicCNVHMM extends SparkCommandLineProgram {
         final List<Pair<SimpleInterval, AFCRHiddenState>> segmentation = jointSegmenter.findSegments();
         final List<SimpleInterval> segments = segmentation.stream().map(Pair::getLeft).collect(Collectors.toList());
         final SegmentedGenome segmentedGenome = new SegmentedGenome(segments, genome);
+        logger.info(String.format("Joint segmentation resulted in %d segments.", segments.size()));
 
         //initial MCMC model fitting performed by ACNVModeller constructor
         final ACNVModeller modeller = new ACNVModeller(segmentedGenome, allelicPoN,
